@@ -1,83 +1,94 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.schema;
 
 import com.arcadedb.Constants;
 import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.Document;
+import com.arcadedb.database.MutableDocument;
 import com.arcadedb.database.Record;
-import com.arcadedb.database.*;
+import com.arcadedb.engine.Bucket;
 import com.arcadedb.engine.Dictionary;
-import com.arcadedb.engine.*;
+import com.arcadedb.engine.PaginatedComponent;
+import com.arcadedb.engine.PaginatedComponentFactory;
+import com.arcadedb.engine.PaginatedFile;
 import com.arcadedb.exception.ConfigurationException;
 import com.arcadedb.exception.DatabaseMetadataException;
+import com.arcadedb.exception.DatabaseOperationException;
 import com.arcadedb.exception.SchemaException;
 import com.arcadedb.index.Index;
+import com.arcadedb.index.IndexException;
 import com.arcadedb.index.IndexFactory;
 import com.arcadedb.index.IndexInternal;
 import com.arcadedb.index.TypeIndex;
-import com.arcadedb.index.lsm.*;
+import com.arcadedb.index.lsm.LSMTreeFullTextIndex;
+import com.arcadedb.index.lsm.LSMTreeIndex;
+import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
+import com.arcadedb.index.lsm.LSMTreeIndexCompacted;
+import com.arcadedb.index.lsm.LSMTreeIndexMutable;
 import com.arcadedb.log.LogManager;
+import com.arcadedb.security.SecurityDatabaseUser;
+import com.arcadedb.security.SecurityManager;
 import com.arcadedb.utility.FileUtils;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
-import java.util.concurrent.Callable;
-import java.util.logging.Level;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class EmbeddedSchema implements Schema {
-  public static final String DEFAULT_DATE_FORMAT     = "yyyy-MM-dd";
-  public static final String DEFAULT_DATETIME_FORMAT = "yyyy-MM-dd HH:mm:ss";
-  public static final String DEFAULT_ENCODING        = "UTF-8";
-
-  public static final  String                     SCHEMA_FILE_NAME          = "schema.json";
-  public static final  String                     SCHEMA_PREV_FILE_NAME     = "schema.prev.json";
-  private static final int                        EDGE_DEF_PAGE_SIZE        = Bucket.DEF_PAGE_SIZE / 3;
-  private static final int                        DEFAULT_CLUSTERS_PER_TYPE = 8;
+  public static final  String                     DEFAULT_DATE_FORMAT     = "yyyy-MM-dd";
+  public static final  String                     DEFAULT_DATETIME_FORMAT = "yyyy-MM-dd HH:mm:ss";
+  public static final  String                     DEFAULT_ENCODING        = "UTF-8";
+  public static final  String                     SCHEMA_FILE_NAME        = "schema.json";
+  public static final  String                     SCHEMA_PREV_FILE_NAME   = "schema.prev.json";
+  private static final String                     ENCODING                = DEFAULT_ENCODING;
+  private static final int                        EDGE_DEF_PAGE_SIZE      = Bucket.DEF_PAGE_SIZE / 3;
   private final        DatabaseInternal           database;
-  private final        List<PaginatedComponent>   files                     = new ArrayList<>();
-  private final        Map<String, DocumentType>  types                     = new HashMap<>();
-  private final        Map<String, Bucket>        bucketMap                 = new HashMap<>();
-  protected final      Map<String, IndexInternal> indexMap                  = new HashMap<>();
+  private final        SecurityManager            security;
+  private final        List<PaginatedComponent>   files                   = new ArrayList<>();
+  private final        Map<String, DocumentType>  types                   = new HashMap<>();
+  private final        Map<String, Bucket>        bucketMap               = new HashMap<>();
+  protected final      Map<String, IndexInternal> indexMap                = new HashMap<>();
   private final        String                     databasePath;
-  private              Dictionary                 dictionary;
-  private              String                     dateFormat                = DEFAULT_DATE_FORMAT;
-  private              String                     dateTimeFormat            = DEFAULT_DATETIME_FORMAT;
-  private              String                     encoding                  = DEFAULT_ENCODING;
-  private              TimeZone                   timeZone                  = TimeZone.getDefault();
+  private final        File                       configurationFile;
   private final        PaginatedComponentFactory  paginatedComponentFactory;
-  private final        IndexFactory               indexFactory              = new IndexFactory();
-  private              boolean                    readingFromFile           = false;
-  private              boolean                    dirtyConfiguration        = false;
-  private              boolean                    loadInRamCompleted        = false;
-  private              boolean                    multipleUpdate            = false;
+  private final        IndexFactory               indexFactory            = new IndexFactory();
+  private              Dictionary                 dictionary;
+  private              String                     dateFormat              = DEFAULT_DATE_FORMAT;
+  private              String                     dateTimeFormat          = DEFAULT_DATETIME_FORMAT;
+  private              TimeZone                   timeZone                = TimeZone.getDefault();
+  private              boolean                    readingFromFile         = false;
+  private              boolean                    dirtyConfiguration      = false;
+  private              boolean                    loadInRamCompleted      = false;
+  private              boolean                    multipleUpdate          = false;
+  private final        AtomicLong                 versionSerial           = new AtomicLong();
 
-  public EmbeddedSchema(final DatabaseInternal database, final String databasePath, final PaginatedFile.MODE mode) {
+  public EmbeddedSchema(final DatabaseInternal database, final String databasePath, final SecurityManager security) {
     this.database = database;
     this.databasePath = databasePath;
+    this.security = security;
 
     paginatedComponentFactory = new PaginatedComponentFactory(database);
     paginatedComponentFactory.registerComponent(Dictionary.DICT_EXT, new Dictionary.PaginatedComponentFactoryHandler());
@@ -89,6 +100,7 @@ public class EmbeddedSchema implements Schema {
 
     indexFactory.register(INDEX_TYPE.LSM_TREE.name(), new LSMTreeIndex.IndexFactoryHandler());
     indexFactory.register(INDEX_TYPE.FULL_TEXT.name(), new LSMTreeFullTextIndex.IndexFactoryHandler());
+    configurationFile = new File(databasePath + File.separator + SCHEMA_FILE_NAME);
   }
 
   @Override
@@ -108,11 +120,17 @@ public class EmbeddedSchema implements Schema {
     } catch (Exception e) {
       LogManager.instance().log(this, Level.SEVERE, "Error on opening dictionary '%s' (error=%s)", e, databasePath, e.toString());
       database.rollback();
-      throw new DatabaseMetadataException("Error on loading dictionary (error=" + e.toString() + ")", e);
+      throw new DatabaseMetadataException("Error on loading dictionary (error=" + e + ")", e);
     }
   }
 
-  public void load(final PaginatedFile.MODE mode) throws IOException {
+  public void load(final PaginatedFile.MODE mode, final boolean initialize) throws IOException {
+    files.clear();
+    types.clear();
+    bucketMap.clear();
+    indexMap.clear();
+    dictionary = null;
+
     final Collection<PaginatedFile> filesToOpen = database.getFileManager().getFiles();
 
     // REGISTER THE DICTIONARY FIRST
@@ -128,7 +146,7 @@ public class EmbeddedSchema implements Schema {
       throw new ConfigurationException("Dictionary file not found in database directory");
 
     for (PaginatedFile file : filesToOpen) {
-      if (!Dictionary.DICT_EXT.equals(file.getFileExtension())) {
+      if (file != null && !Dictionary.DICT_EXT.equals(file.getFileExtension())) {
         final PaginatedComponent pf = paginatedComponentFactory.createComponent(file, mode);
 
         if (pf != null) {
@@ -144,48 +162,11 @@ public class EmbeddedSchema implements Schema {
       }
     }
 
-    for (PaginatedComponent f : files)
-      if (f != null)
-        f.onAfterLoad();
+    if (initialize)
+      initComponents();
 
     readConfiguration();
-  }
-
-  public void loadChanges() throws IOException {
-    final Collection<PaginatedFile> filesToOpen = database.getFileManager().getFiles();
-
-    final PaginatedFile.MODE mode = database.getMode();
-
-    final List<PaginatedComponent> newFilesLoaded = new ArrayList<>();
-
-    for (PaginatedFile file : filesToOpen) {
-      if (!Dictionary.DICT_EXT.equals(file.getFileExtension())) {
-        final PaginatedComponent pf = paginatedComponentFactory.createComponent(file, mode);
-
-        if (pf != null) {
-          if (pf.getId() < files.size() && files.get(pf.getId()) != null)
-            // ALREADY LOADED
-            continue;
-
-          final Object mainComponent = pf.getMainComponent();
-
-          if (mainComponent instanceof Bucket)
-            bucketMap.put(pf.getName(), (Bucket) mainComponent);
-          else if (mainComponent instanceof IndexInternal)
-            indexMap.put(pf.getName(), (IndexInternal) mainComponent);
-
-          registerFile(pf);
-
-          newFilesLoaded.add(pf);
-        }
-      }
-    }
-
-    for (PaginatedComponent f : newFilesLoaded)
-      if (f != null)
-        f.onAfterLoad();
-
-    readConfiguration();
+    updateSecurity();
   }
 
   @Override
@@ -269,7 +250,7 @@ public class EmbeddedSchema implements Schema {
       throw new SchemaException("Bucket with id '" + id + "' was not found");
 
     final PaginatedComponent p = files.get(id);
-    if (p == null || !(p instanceof Bucket))
+    if (!(p instanceof Bucket))
       throw new SchemaException("Bucket with id '" + id + "' was not found");
     return (Bucket) p;
   }
@@ -280,33 +261,35 @@ public class EmbeddedSchema implements Schema {
   }
 
   public Bucket createBucket(final String bucketName, final int pageSize) {
-    return (Bucket) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        if (bucketMap.containsKey(bucketName))
-          throw new SchemaException("Cannot create bucket '" + bucketName + "' because already exists");
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
 
-        try {
-          final Bucket bucket = new Bucket(database, bucketName, databasePath + "/" + bucketName, PaginatedFile.MODE.READ_WRITE, pageSize);
-          registerFile(bucket);
-          bucketMap.put(bucketName, bucket);
+    if (bucketMap.containsKey(bucketName))
+      throw new SchemaException("Cannot create bucket '" + bucketName + "' because already exists");
 
-          return bucket;
+    return recordFileChanges(() -> {
+      try {
+        final Bucket bucket = new Bucket(database, bucketName, databasePath + File.separator + bucketName, PaginatedFile.MODE.READ_WRITE, pageSize,
+            Bucket.CURRENT_VERSION);
+        registerFile(bucket);
+        bucketMap.put(bucketName, bucket);
 
-        } catch (IOException e) {
-          throw new SchemaException("Cannot create bucket '" + bucketName + "' (error=" + e + ")", e);
-        }
+        return bucket;
+
+      } catch (IOException e) {
+        throw new SchemaException("Cannot create bucket '" + bucketName + "' (error=" + e + ")", e);
       }
     });
   }
 
   public String getEncoding() {
-    return encoding;
+    return ENCODING;
   }
 
   @Override
   public DocumentType copyType(final String typeName, final String newTypeName, final Class<? extends DocumentType> newTypeClass, final int buckets,
       final int pageSize, final int transactionBatchSize) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (existsType(newTypeName))
       throw new IllegalArgumentException("Type '" + newTypeName + "' already exists");
 
@@ -341,17 +324,15 @@ public class EmbeddedSchema implements Schema {
           final MutableDocument newRecord;
           if (newType instanceof VertexType)
             newRecord = database.newVertex(newTypeName);
-          else if (newType instanceof DocumentType)
-            newRecord = database.newDocument(newTypeName);
           else
-            throw new IllegalArgumentException("Type '" + newType + "' not supported");
+            newRecord = database.newDocument(newTypeName);
 
-          newRecord.fromMap(record.toMap());
+          newRecord.fromMap(record.propertiesAsMap());
           newRecord.save();
 
           ++copied;
 
-          if (copied > 0 && copied % transactionBatchSize == 0) {
+          if (copied % transactionBatchSize == 0) {
             database.commit();
             database.begin();
           }
@@ -359,7 +340,7 @@ public class EmbeddedSchema implements Schema {
 
         // COPY INDEXES
         for (Index index : oldType.getAllIndexes(false))
-          newType.createTypeIndex(index.getType(), index.isUnique(), index.getPropertyNames());
+          newType.createTypeIndex(index.getType(), index.isUnique(), index.getPropertyNames().toArray(new String[index.getPropertyNames().size()]));
 
         database.commit();
 
@@ -401,13 +382,42 @@ public class EmbeddedSchema implements Schema {
 
   @Override
   public void dropIndex(final String indexName) {
-    final IndexInternal index = indexMap.remove(indexName);
-    if (index == null)
-      return;
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
 
-    index.drop();
+    recordFileChanges(() -> {
+      multipleUpdate = true;
 
-    saveConfiguration();
+      final IndexInternal index = indexMap.get(indexName);
+      if (index == null)
+        return null;
+
+      List<Integer> lockedFiles = null;
+      try {
+        lockedFiles = database.getTransactionManager().tryLockFiles(index.getFileIds(), 5_000);
+
+        if (index.getTypeIndex() != null)
+          index.getTypeIndex().removeIndexOnBucket(index);
+
+        indexMap.remove(indexName);
+        index.drop();
+
+        if (index.getTypeName() != null) {
+          if (index instanceof TypeIndex)
+            getType(index.getTypeName()).removeTypeIndexInternal((TypeIndex) index);
+          else
+            getType(index.getTypeName()).removeBucketIndexInternal(index);
+        }
+
+      } catch (Exception e) {
+        throw new SchemaException("Cannot drop the index '" + indexName + "' (error=" + e + ")", e);
+      } finally {
+        if (lockedFiles != null)
+          database.getTransactionManager().unlockFilesInOrder(lockedFiles);
+
+        multipleUpdate = false;
+      }
+      return null;
+    });
   }
 
   @Override
@@ -420,53 +430,59 @@ public class EmbeddedSchema implements Schema {
 
   @Override
   public TypeIndex createTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String... propertyNames) {
-    return createTypeIndex(indexType, unique, typeName, propertyNames, LSMTreeIndexAbstract.DEF_PAGE_SIZE, null);
+    return createTypeIndex(indexType, unique, typeName, propertyNames, LSMTreeIndexAbstract.DEF_PAGE_SIZE, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, null);
   }
 
   @Override
   public TypeIndex createTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String[] propertyNames, final int pageSize) {
-    return createTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.ERROR, null);
+    return createTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, null);
   }
 
   @Override
   public TypeIndex createTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String[] propertyNames, final int pageSize,
       final Index.BuildIndexCallback callback) {
-    return createTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.ERROR, callback);
+    return createTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, callback);
   }
 
   @Override
   public TypeIndex createTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String[] propertyNames, final int pageSize,
       final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, final Index.BuildIndexCallback callback) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+    if (indexType == null)
+      throw new DatabaseMetadataException("Cannot create index on type '" + typeName + "' because indexType was not specified");
     if (propertyNames.length == 0)
       throw new DatabaseMetadataException("Cannot create index on type '" + typeName + "' because there are no property defined");
 
-    return (TypeIndex) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        try {
-          final DocumentType type = getType(typeName);
+    final DocumentType type = getType(typeName);
 
-          final TypeIndex index = type.getPolymorphicIndexByProperties(propertyNames);
-          if (index != null)
-            throw new IllegalArgumentException(
-                "Found the existent index '" + index.getName() + "' defined on the properties '" + Arrays.asList(propertyNames) + "' for type '" + typeName
-                    + "'");
+    final TypeIndex index = type.getPolymorphicIndexByProperties(propertyNames);
+    if (index != null)
+      throw new IllegalArgumentException(
+          "Found the existent index '" + index.getName() + "' defined on the properties '" + Arrays.asList(propertyNames) + "' for type '" + typeName + "'");
 
-          // CHECK ALL THE PROPERTIES EXIST
-          final byte[] keyTypes = new byte[propertyNames.length];
-          int i = 0;
+    // CHECK ALL THE PROPERTIES EXIST
+    final Type[] keyTypes = new Type[propertyNames.length];
+    int i = 0;
 
-          for (String propertyName : propertyNames) {
-            final Property property = type.getPolymorphicPropertyIfExists(propertyName);
-            if (property == null)
-              throw new SchemaException("Cannot create the index on type '" + typeName + "." + propertyName + "' because the property does not exist");
+    for (String propertyName : propertyNames) {
+      if (type instanceof EdgeType && ("@out".equals(propertyName) || "@in".equals(propertyName))) {
+        keyTypes[i++] = Type.LINK;
+      } else {
+        final Property property = type.getPolymorphicPropertyIfExists(propertyName);
+        if (property == null)
+          throw new SchemaException("Cannot create the index on type '" + typeName + "." + propertyName + "' because the property does not exist");
 
-            keyTypes[i++] = property.getType().getBinaryType();
-          }
+        keyTypes[i++] = property.getType();
+      }
+    }
 
-          final List<Bucket> buckets = type.getBuckets(true);
+    final List<Bucket> buckets = type.getBuckets(true);
+    final Index[] indexes = new Index[buckets.size()];
 
-          final Index[] indexes = new Index[buckets.size()];
+    try {
+      recordFileChanges(() -> {
+        database.transaction(() -> {
+
           for (int idx = 0; idx < buckets.size(); ++idx) {
             final Bucket bucket = buckets.get(idx);
             indexes[idx] = createBucketIndex(type, keyTypes, bucket, typeName, indexType, unique, pageSize, nullStrategy, callback, propertyNames);
@@ -474,13 +490,21 @@ public class EmbeddedSchema implements Schema {
 
           saveConfiguration();
 
-          return type.getPolymorphicIndexByProperties(propertyNames);
+        }, false, 1, null, (error) -> {
+          for (int j = 0; j < indexes.length; j++) {
+            final IndexInternal indexToRemove = (IndexInternal) indexes[j];
+            if (indexToRemove != null)
+              indexToRemove.drop();
+          }
+        });
+        return null;
+      });
 
-        } catch (IOException e) {
-          throw new SchemaException("Cannot create index on type '" + typeName + "' (error=" + e + ")", e);
-        }
-      }
-    });
+      return type.getPolymorphicIndexByProperties(propertyNames);
+    } catch (Throwable e) {
+      dropIndex(typeName + Arrays.toString(propertyNames));
+      throw new IndexException("Error on creating index on type '" + typeName + "', properties " + Arrays.toString(propertyNames), e);
+    }
   }
 
   @Override
@@ -491,13 +515,13 @@ public class EmbeddedSchema implements Schema {
   @Override
   public TypeIndex getOrCreateTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String[] propertyNames,
       final int pageSize) {
-    return getOrCreateTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.ERROR, null);
+    return getOrCreateTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, null);
   }
 
   @Override
   public TypeIndex getOrCreateTypeIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String[] propertyNames,
       final int pageSize, final Index.BuildIndexCallback callback) {
-    return getOrCreateTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.ERROR, callback);
+    return getOrCreateTypeIndex(indexType, unique, typeName, propertyNames, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, callback);
   }
 
   @Override
@@ -520,96 +544,115 @@ public class EmbeddedSchema implements Schema {
   @Override
   public Index createBucketIndex(final INDEX_TYPE indexType, final boolean unique, final String typeName, final String bucketName, final String[] propertyNames,
       final int pageSize, final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, final Index.BuildIndexCallback callback) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (propertyNames.length == 0)
       throw new DatabaseMetadataException("Cannot create index on type '" + typeName + "' because there are no property defined");
 
-    return (Index) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        try {
-          final DocumentType type = getType(typeName);
+    final DocumentType type = getType(typeName);
 
-          // CHECK ALL THE PROPERTIES EXIST
-          final byte[] keyTypes = new byte[propertyNames.length];
-          int i = 0;
+    // CHECK ALL THE PROPERTIES EXIST
+    final Type[] keyTypes = new Type[propertyNames.length];
+    int i = 0;
 
-          for (String propertyName : propertyNames) {
-            final Property property = type.getPolymorphicPropertyIfExists(propertyName);
-            if (property == null)
-              throw new SchemaException("Cannot create the index on type '" + typeName + "." + propertyName + "' because the property does not exist");
+    for (String propertyName : propertyNames) {
+      final Property property = type.getPolymorphicPropertyIfExists(propertyName);
+      if (property == null)
+        throw new SchemaException("Cannot create the index on type '" + typeName + "." + propertyName + "' because the property does not exist");
 
-            keyTypes[i++] = property.getType().getBinaryType();
+      keyTypes[i++] = property.getType();
+    }
+
+    return recordFileChanges(() -> {
+      final AtomicReference<Index> result = new AtomicReference<>();
+      database.transaction(() -> {
+
+        Bucket bucket = null;
+        final List<Bucket> buckets = type.getBuckets(false);
+        for (Bucket b : buckets) {
+          if (bucketName.equals(b.getName())) {
+            bucket = b;
+            break;
           }
-
-          Bucket bucket = null;
-          final List<Bucket> buckets = type.getBuckets(false);
-          for (Bucket b : buckets) {
-            if (bucketName.equals(b.getName())) {
-              bucket = b;
-              break;
-            }
-          }
-
-          final Index index = createBucketIndex(type, keyTypes, bucket, typeName, indexType, unique, pageSize, nullStrategy, callback, propertyNames);
-
-          saveConfiguration();
-
-          return index;
-
-        } catch (IOException e) {
-          throw new SchemaException("Cannot create index on type '" + typeName + "' (error=" + e + ")", e);
         }
-      }
+
+        final Index index = createBucketIndex(type, keyTypes, bucket, typeName, indexType, unique, pageSize, nullStrategy, callback, propertyNames);
+        result.set(index);
+
+        saveConfiguration();
+
+      }, false, 1, null, (error) -> {
+        final Index indexToRemove = result.get();
+        if (indexToRemove != null) {
+          ((IndexInternal) indexToRemove).drop();
+        }
+      });
+
+      return result.get();
     });
   }
 
-  private Index createBucketIndex(final DocumentType type, final byte[] keyTypes, final Bucket bucket, final String typeName, final INDEX_TYPE indexType,
+  protected Index createBucketIndex(final DocumentType type, final Type[] keyTypes, final Bucket bucket, final String typeName, final INDEX_TYPE indexType,
       final boolean unique, final int pageSize, final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, final Index.BuildIndexCallback callback,
-      final String[] propertyNames) throws IOException {
+      final String[] propertyNames) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (bucket == null)
       throw new IllegalArgumentException("bucket is null");
 
-    final String indexName = FileUtils.encode(bucket.getName(), encoding) + "_" + System.nanoTime();
+    final String indexName = FileUtils.encode(bucket.getName(), ENCODING) + "_" + System.nanoTime();
 
     if (indexMap.containsKey(indexName))
       throw new DatabaseMetadataException("Cannot create index '" + indexName + "' on type '" + typeName + "' because it already exists");
 
-    final IndexInternal index = indexFactory.createIndex(indexType.name(), database, indexName, unique, databasePath + "/" + indexName,
+    final IndexInternal index = indexFactory.createIndex(indexType.name(), database, indexName, unique, databasePath + File.separator + indexName,
         PaginatedFile.MODE.READ_WRITE, keyTypes, pageSize, nullStrategy, callback);
 
-    registerFile(index.getPaginatedComponent());
+    try {
+      registerFile(index.getPaginatedComponent());
 
-    indexMap.put(indexName, index);
+      indexMap.put(indexName, index);
 
-    type.addIndexInternal(index, bucket.getId(), propertyNames);
-    index.build(callback);
+      type.addIndexInternal(index, bucket.getId(), propertyNames);
+      index.build(callback);
 
-    return index;
+      return index;
+
+    } catch (Exception e) {
+      dropIndex(indexName);
+      throw new IndexException("Error on creating index '" + indexName + "'", e);
+    }
   }
 
-  public Index createManualIndex(final INDEX_TYPE indexType, final boolean unique, final String indexName, final byte[] keyTypes, final int pageSize,
+  public Index createManualIndex(final INDEX_TYPE indexType, final boolean unique, final String indexName, final Type[] keyTypes, final int pageSize,
       final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy) {
-    return (Index) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        if (indexMap.containsKey(indexName))
-          throw new SchemaException("Cannot create index '" + indexName + "' because already exists");
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
 
-        try {
-          final IndexInternal index = indexFactory.createIndex(indexType.name(), database, FileUtils.encode(indexName, encoding), unique,
-              databasePath + "/" + indexName, PaginatedFile.MODE.READ_WRITE, keyTypes, pageSize, nullStrategy, null);
+    if (indexMap.containsKey(indexName))
+      throw new SchemaException("Cannot create index '" + indexName + "' because already exists");
 
-          if (index instanceof PaginatedComponent)
-            registerFile((PaginatedComponent) index);
+    return recordFileChanges(() -> {
+      final AtomicReference<IndexInternal> result = new AtomicReference<>();
+      database.transaction(() -> {
 
-          indexMap.put(indexName, index);
+        final IndexInternal index = indexFactory.createIndex(indexType.name(), database, FileUtils.encode(indexName, ENCODING), unique,
+            databasePath + File.separator + indexName, PaginatedFile.MODE.READ_WRITE, keyTypes, pageSize, nullStrategy, null);
 
-          return index;
+        result.set(index);
 
-        } catch (IOException e) {
-          throw new SchemaException("Cannot create index '" + indexName + "' (error=" + e + ")", e);
+        if (index instanceof PaginatedComponent)
+          registerFile((PaginatedComponent) index);
+
+        indexMap.put(indexName, index);
+
+      }, false, 1, null, (error) -> {
+        final IndexInternal indexToRemove = result.get();
+        if (indexToRemove != null) {
+          indexToRemove.drop();
         }
-      }
+      });
+
+      return result.get();
     });
   }
 
@@ -672,112 +715,133 @@ public class EmbeddedSchema implements Schema {
   }
 
   public void dropType(final String typeName) {
-    database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        multipleUpdate = true;
-        try {
-          final DocumentType type = database.getSchema().getType(typeName);
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
 
-          // CHECK INHERITANCE TREE AND ATTACH SUB-TYPES DIRECTLY TO THE PARENT TYPE
-          for (DocumentType parent : type.parentTypes)
-            parent.subTypes.remove(type);
-          for (DocumentType sub : type.subTypes) {
-            sub.parentTypes.remove(type);
-            for (DocumentType parent : type.parentTypes)
-              sub.addParentType(parent);
-          }
+    recordFileChanges(() -> {
+      multipleUpdate = true;
+      try {
+        final DocumentType type = database.getSchema().getType(typeName);
 
-          final List<Bucket> buckets = type.getBuckets(false);
-          final Set<Integer> bucketIds = new HashSet<>(buckets.size());
-          for (Bucket b : buckets)
-            bucketIds.add(b.getId());
-
-          // DELETE ALL ASSOCIATED INDEXES
-          for (Index m : type.getAllIndexes(true))
-            dropIndex(m.getName());
-
-          // DELETE ALL ASSOCIATED BUCKETS
-          for (Bucket b : buckets)
-            dropBucket(b.getName());
-
-          if (type instanceof VertexType)
-            database.getGraphEngine().dropVertexType(database, (VertexType) type);
-
-          if (types.remove(typeName) == null)
-            throw new SchemaException("Type '" + typeName + "' not found");
-        } finally {
-          multipleUpdate = false;
-          saveConfiguration();
+        // CHECK INHERITANCE TREE AND ATTACH SUB-TYPES DIRECTLY TO THE PARENT TYPE
+        for (DocumentType parent : type.superTypes)
+          parent.subTypes.remove(type);
+        for (DocumentType sub : type.subTypes) {
+          sub.superTypes.remove(type);
+          for (DocumentType parent : type.superTypes)
+            sub.addSuperType(parent, false);
         }
-        return null;
+
+        // DELETE ALL ASSOCIATED INDEXES
+        for (Index m : type.getAllIndexes(true))
+          dropIndex(m.getName());
+
+        // DELETE ALL ASSOCIATED BUCKETS
+        final List<Bucket> buckets = new ArrayList<>(type.getBuckets(false));
+        for (Bucket b : buckets) {
+          type.removeBucket(b);
+          dropBucket(b.getName());
+        }
+
+        if (type instanceof VertexType)
+          database.getGraphEngine().dropVertexType((VertexType) type);
+
+        if (types.remove(typeName) == null)
+          throw new SchemaException("Type '" + typeName + "' not found");
+      } finally {
+        multipleUpdate = false;
+        saveConfiguration();
+        updateSecurity();
       }
+      return null;
     });
   }
 
   @Override
   public void dropBucket(final String bucketName) {
-    database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        final Bucket bucket = getBucketByName(bucketName);
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
 
-        database.getPageManager().deleteFile(bucket.getId());
-        try {
-          database.getFileManager().dropFile(bucket.getId());
-        } catch (IOException e) {
-          LogManager.instance().log(this, Level.SEVERE, "Error on deleting bucket '%s'", e, bucketName);
-        }
-        removeFile(bucket.getId());
+    final Bucket bucket = getBucketByName(bucketName);
 
-        bucketMap.remove(bucketName);
-
-        for (Index idx : new ArrayList<>(indexMap.values())) {
-          if (idx.getAssociatedBucketId() == bucket.getId())
-            dropIndex(idx.getName());
-        }
-
-        saveConfiguration();
-        return null;
+    recordFileChanges(() -> {
+      for (DocumentType type : types.values()) {
+        if (type.buckets.contains(bucket))
+          throw new SchemaException(
+              "Error on dropping bucket '" + bucketName + "' because it is assigned to type '" + type.getName() + "'. Remove the association first");
       }
+
+      database.getPageManager().deleteFile(bucket.getId());
+      try {
+        database.getFileManager().dropFile(bucket.getId());
+      } catch (IOException e) {
+        LogManager.instance().log(this, Level.SEVERE, "Error on deleting bucket '%s'", e, bucketName);
+      }
+      removeFile(bucket.getId());
+
+      bucketMap.remove(bucketName);
+
+      for (Index idx : new ArrayList<>(indexMap.values())) {
+        if (idx.getAssociatedBucketId() == bucket.getId())
+          dropIndex(idx.getName());
+      }
+
+      saveConfiguration();
+      return null;
     });
   }
 
   public DocumentType createDocumentType(final String typeName) {
-    return createDocumentType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return createDocumentType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS), Collections.emptyList(),
+        database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
   }
 
   public DocumentType createDocumentType(final String typeName, final int buckets) {
-    return createDocumentType(typeName, buckets, database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
+    return createDocumentType(typeName, buckets, Collections.emptyList(),
+        database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
   }
 
+  @Override
   public DocumentType createDocumentType(final String typeName, final int buckets, final int pageSize) {
+    return createDocumentType(typeName, buckets, Collections.emptyList(), pageSize);
+  }
+
+  @Override
+  public DocumentType createDocumentType(final String typeName, final List<Bucket> buckets) {
+    return createDocumentType(typeName, 0, buckets, database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
+  }
+
+  @Override
+  public DocumentType createDocumentType(final String typeName, final List<Bucket> buckets, final int pageSize) {
+    return createDocumentType(typeName, 0, buckets, pageSize);
+  }
+
+  private DocumentType createDocumentType(final String typeName, final int buckets, final List<Bucket> bucketInstances, final int pageSize) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (typeName == null || typeName.isEmpty())
       throw new IllegalArgumentException("Missing type");
 
-    if (buckets < 1)
+    if (buckets < 1 && bucketInstances.isEmpty())
       throw new IllegalArgumentException("Invalid number of buckets (" + buckets + "). At least 1 bucket is necessary to create a type");
 
     if (buckets > 32)
       throw new IllegalArgumentException("Cannot create " + buckets + " buckets: maximum is 32");
 
-    return (DocumentType) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        if (typeName.indexOf(",") > -1)
-          throw new IllegalArgumentException("Type name '" + typeName + "' contains non valid characters");
+    if (typeName.contains(","))
+      throw new IllegalArgumentException("Type name '" + typeName + "' contains non valid characters");
 
-        if (types.containsKey(typeName))
-          throw new SchemaException("Type '" + typeName + "' already exists");
+    if (types.containsKey(typeName))
+      throw new SchemaException("Type '" + typeName + "' already exists");
 
-        // CREATE ENTRY IN DICTIONARY IF NEEDED
-        dictionary.getIdByName(typeName, true);
+    return recordFileChanges(() -> {
+      // CREATE ENTRY IN DICTIONARY IF NEEDED. THIS IS USED BY EMBEDDED DOCUMENT WHERE THE DICTIONARY ID IS SAVED
+      dictionary.getIdByName(typeName, true);
 
-        final DocumentType c = new DocumentType(EmbeddedSchema.this, typeName);
-        types.put(typeName, c);
+      final DocumentType c = new DocumentType(EmbeddedSchema.this, typeName);
+      types.put(typeName, c);
 
+      if (bucketInstances.isEmpty()) {
         for (int i = 0; i < buckets; ++i) {
-          final String bucketName = FileUtils.encode(typeName, encoding) + "_" + i;
+          final String bucketName = FileUtils.encode(typeName, ENCODING) + "_" + i;
           if (existsBucket(bucketName)) {
             LogManager.instance().log(this, Level.WARNING, "Reusing found bucket '%s' for type '%s'", null, bucketName, typeName);
             c.addBucket(getBucketByName(bucketName));
@@ -785,17 +849,21 @@ public class EmbeddedSchema implements Schema {
             // CREATE A NEW ONE
             c.addBucket(createBucket(bucketName, pageSize));
         }
-
-        saveConfiguration();
-
-        return c;
+      } else {
+        for (Bucket bucket : bucketInstances)
+          c.addBucket(bucket);
       }
+
+      saveConfiguration();
+      updateSecurity();
+
+      return c;
     });
   }
 
   @Override
   public DocumentType getOrCreateDocumentType(final String typeName) {
-    return getOrCreateDocumentType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return getOrCreateDocumentType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS));
   }
 
   @Override
@@ -816,38 +884,56 @@ public class EmbeddedSchema implements Schema {
 
   @Override
   public VertexType createVertexType(final String typeName) {
-    return createVertexType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return createVertexType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS), Collections.emptyList(),
+        database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
   }
 
   @Override
   public VertexType createVertexType(final String typeName, final int buckets) {
-    return createVertexType(typeName, buckets, database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
+    return createVertexType(typeName, buckets, Collections.emptyList(),
+        database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
   }
 
   @Override
-  public VertexType createVertexType(String typeName, int buckets, final int pageSize) {
+  public VertexType createVertexType(final String typeName, final List<Bucket> bucketInstances) {
+    return createVertexType(typeName, 0, bucketInstances, database.getConfiguration().getValueAsInteger(GlobalConfiguration.BUCKET_DEFAULT_PAGE_SIZE));
+  }
+
+  @Override
+  public VertexType createVertexType(final String typeName, final int buckets, final int pageSize) {
+    return createVertexType(typeName, buckets, Collections.emptyList(), pageSize);
+  }
+
+  @Override
+  public VertexType createVertexType(final String typeName, final List<Bucket> bucketInstances, final int pageSize) {
+    return createVertexType(typeName, 0, bucketInstances, pageSize);
+  }
+
+  private VertexType createVertexType(final String typeName, final int buckets, final List<Bucket> bucketInstances, final int pageSize) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (typeName == null || typeName.isEmpty())
       throw new IllegalArgumentException("Missing type");
 
-    if (buckets < 1)
+    if (buckets < 1 && bucketInstances.isEmpty())
       throw new IllegalArgumentException("Invalid number of buckets (" + buckets + "). At least 1 bucket is necessary to create a type");
 
     if (buckets > 32)
       throw new IllegalArgumentException("Cannot create " + buckets + " buckets: maximum is 32");
 
-    return (VertexType) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        if (typeName.indexOf(",") > -1)
-          throw new IllegalArgumentException("Vertex type name '" + typeName + "' contains non valid characters");
+    if (typeName.contains(","))
+      throw new IllegalArgumentException("Vertex type name '" + typeName + "' contains non valid characters");
 
-        if (types.containsKey(typeName))
-          throw new SchemaException("Vertex type '" + typeName + "' already exists");
-        final VertexType c = new VertexType(EmbeddedSchema.this, typeName);
-        types.put(typeName, c);
+    if (types.containsKey(typeName))
+      throw new SchemaException("Vertex type '" + typeName + "' already exists");
 
+    return recordFileChanges(() -> {
+      final VertexType c = new VertexType(EmbeddedSchema.this, typeName);
+      types.put(typeName, c);
+
+      if (bucketInstances.isEmpty()) {
         for (int i = 0; i < buckets; ++i) {
-          final String bucketName = FileUtils.encode(typeName, encoding) + "_" + i;
+          final String bucketName = FileUtils.encode(typeName, ENCODING) + "_" + i;
           if (existsBucket(bucketName)) {
             LogManager.instance().log(this, Level.WARNING, "Reusing found bucket '%s' for type '%s'", null, bucketName, typeName);
             c.addBucket(getBucketByName(bucketName));
@@ -855,19 +941,23 @@ public class EmbeddedSchema implements Schema {
             // CREATE A NEW ONE
             c.addBucket(createBucket(bucketName, pageSize));
         }
-
-        database.getGraphEngine().createVertexType(database, c);
-
-        saveConfiguration();
-
-        return c;
+      } else {
+        for (Bucket bucket : bucketInstances)
+          c.addBucket(bucket);
       }
+
+      database.getGraphEngine().createVertexType(c);
+
+      saveConfiguration();
+      updateSecurity();
+
+      return c;
     });
   }
 
   @Override
   public VertexType getOrCreateVertexType(final String typeName) {
-    return getOrCreateVertexType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return getOrCreateVertexType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS));
   }
 
   @Override
@@ -888,38 +978,54 @@ public class EmbeddedSchema implements Schema {
 
   @Override
   public EdgeType createEdgeType(final String typeName) {
-    return createEdgeType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return createEdgeType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS));
   }
 
   @Override
   public EdgeType createEdgeType(final String typeName, final int buckets) {
-    return createEdgeType(typeName, buckets, EDGE_DEF_PAGE_SIZE);
+    return createEdgeType(typeName, buckets, Collections.emptyList(), EDGE_DEF_PAGE_SIZE);
   }
 
   @Override
   public EdgeType createEdgeType(final String typeName, final int buckets, final int pageSize) {
+    return createEdgeType(typeName, buckets, Collections.emptyList(), pageSize);
+  }
+
+  @Override
+  public EdgeType createEdgeType(final String typeName, final List<Bucket> buckets) {
+    return createEdgeType(typeName, 0, buckets, EDGE_DEF_PAGE_SIZE);
+  }
+
+  @Override
+  public EdgeType createEdgeType(final String typeName, final List<Bucket> buckets, final int pageSize) {
+    return createEdgeType(typeName, 0, buckets, pageSize);
+  }
+
+  private EdgeType createEdgeType(final String typeName, final int buckets, final List<Bucket> bucketInstances, final int pageSize) {
+    database.checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS.UPDATE_SCHEMA);
+
     if (typeName == null || typeName.isEmpty())
       throw new IllegalArgumentException("Missing type");
 
-    if (buckets < 1)
+    if (buckets < 1 && bucketInstances.isEmpty())
       throw new IllegalArgumentException("Invalid number of buckets (" + buckets + "). At least 1 bucket is necessary to create a type");
 
     if (buckets > 32)
       throw new IllegalArgumentException("Cannot create " + buckets + " buckets: maximum is 32");
 
-    return (EdgeType) database.executeInWriteLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        if (typeName.indexOf(",") > -1)
-          throw new IllegalArgumentException("Edge type name '" + typeName + "' contains non valid characters");
+    if (typeName.contains(","))
+      throw new IllegalArgumentException("Edge type name '" + typeName + "' contains non valid characters");
 
-        if (types.containsKey(typeName))
-          throw new SchemaException("Edge type '" + typeName + "' already exists");
-        final DocumentType c = new EdgeType(EmbeddedSchema.this, typeName);
-        types.put(typeName, c);
+    if (types.containsKey(typeName))
+      throw new SchemaException("Edge type '" + typeName + "' already exists");
 
+    return recordFileChanges(() -> {
+      final DocumentType c = new EdgeType(EmbeddedSchema.this, typeName);
+      types.put(typeName, c);
+
+      if (bucketInstances.isEmpty()) {
         for (int i = 0; i < buckets; ++i) {
-          final String bucketName = FileUtils.encode(typeName, encoding) + "_" + i;
+          final String bucketName = FileUtils.encode(typeName, ENCODING) + "_" + i;
           if (existsBucket(bucketName)) {
             LogManager.instance().log(this, Level.WARNING, "Reusing found bucket '%s' for type '%s'", null, bucketName, typeName);
             c.addBucket(getBucketByName(bucketName));
@@ -927,17 +1033,20 @@ public class EmbeddedSchema implements Schema {
             // CREATE A NEW ONE
             c.addBucket(createBucket(bucketName, pageSize));
         }
-
-        saveConfiguration();
-
-        return c;
+      } else {
+        for (Bucket bucket : bucketInstances)
+          c.addBucket(bucket);
       }
+      saveConfiguration();
+      updateSecurity();
+
+      return c;
     });
   }
 
   @Override
   public EdgeType getOrCreateEdgeType(final String typeName) {
-    return getOrCreateEdgeType(typeName, DEFAULT_CLUSTERS_PER_TYPE);
+    return getOrCreateEdgeType(typeName, database.getConfiguration().getValueAsInteger(GlobalConfiguration.TYPE_DEFAULT_BUCKETS));
   }
 
   @Override
@@ -964,22 +1073,26 @@ public class EmbeddedSchema implements Schema {
 
     boolean saveConfiguration = false;
     try {
-      File file = new File(databasePath + "/" + SCHEMA_FILE_NAME);
+      File file = new File(databasePath + File.separator + SCHEMA_FILE_NAME);
       if (!file.exists() || file.length() == 0) {
-        file = new File(databasePath + "/" + SCHEMA_PREV_FILE_NAME);
+        file = new File(databasePath + File.separator + SCHEMA_PREV_FILE_NAME);
         if (!file.exists())
           return;
 
         LogManager.instance().log(this, Level.WARNING, "Could not find schema file, loading the previous version saved");
       }
 
-      final String fileContent = FileUtils.readStreamAsString(new FileInputStream(file), encoding);
-
-      final JSONObject root = new JSONObject(fileContent);
+      final JSONObject root;
+      try (FileInputStream fis = new FileInputStream(file)) {
+        final String fileContent = FileUtils.readStreamAsString(fis, ENCODING);
+        root = new JSONObject(fileContent);
+      }
 
       if (root.names() == null || root.names().length() == 0)
         // EMPTY SCHEMA
         return;
+
+      versionSerial.set(root.has("schemaVersion") ? root.getLong("schemaVersion") : 0L);
 
       final JSONObject settings = root.getJSONObject("settings");
 
@@ -1023,9 +1136,10 @@ public class EmbeddedSchema implements Schema {
         if (schemaBucket != null) {
           for (int i = 0; i < schemaBucket.length(); ++i) {
             final PaginatedComponent bucket = bucketMap.get(schemaBucket.getString(i));
-            if (bucket == null || !(bucket instanceof Bucket)) {
+            if (bucket == null) {
               LogManager.instance()
-                  .log(this, Level.WARNING, "Cannot find bucket %s for type '%s', removing it from type configuration", null, schemaBucket.getString(i), type);
+                  .log(this, Level.WARNING, "Cannot find bucket '%s' for type '%s', removing it from type configuration", null, schemaBucket.getString(i),
+                      type);
 
               // GO BACK
               schemaBucket.remove(i);
@@ -1042,37 +1156,56 @@ public class EmbeddedSchema implements Schema {
           if (schemaProperties != null) {
             for (String propName : schemaProperties.keySet()) {
               final JSONObject prop = schemaProperties.getJSONObject(propName);
-              type.createProperty(propName, (String) prop.get("type"));
+              final Property p = type.createProperty(propName, prop);
             }
           }
         }
 
-        final JSONObject schemaIndexes = schemaType.getJSONObject("indexes");
-        if (schemaIndexes != null) {
-          for (String indexName : schemaIndexes.keySet()) {
-            final JSONObject index = schemaIndexes.getJSONObject(indexName);
+        final JSONObject typeIndexesJSON = schemaType.getJSONObject("indexes");
+        if (typeIndexesJSON != null) {
 
-            final JSONArray schemaIndexProperties = index.getJSONArray("properties");
+          final List<String> orderedIndexes = new ArrayList<>(typeIndexesJSON.keySet());
+          orderedIndexes.sort(Comparator.naturalOrder());
+
+          for (String indexName : orderedIndexes) {
+            final JSONObject indexJSON = typeIndexesJSON.getJSONObject(indexName);
+
+            if (!indexName.startsWith(typeName))
+              continue;
+
+            final JSONArray schemaIndexProperties = indexJSON.getJSONArray("properties");
             final String[] properties = new String[schemaIndexProperties.length()];
             for (int i = 0; i < properties.length; ++i)
               properties[i] = schemaIndexProperties.getString(i);
 
-            final IndexInternal idx = indexMap.get(indexName);
-            if (idx != null) {
-              final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy = index.has("nullStrategy") ?
-                  LSMTreeIndexAbstract.NULL_STRATEGY.valueOf(index.getString("nullStrategy")) :
+            final IndexInternal index = indexMap.get(indexName);
+            if (index != null) {
+              final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy = indexJSON.has("nullStrategy") ?
+                  LSMTreeIndexAbstract.NULL_STRATEGY.valueOf(indexJSON.getString("nullStrategy")) :
                   LSMTreeIndexAbstract.NULL_STRATEGY.ERROR;
 
-              idx.setNullStrategy(nullStrategy);
+              index.setNullStrategy(nullStrategy);
 
-              type.addIndexInternal(idx, bucketMap.get(index.getString("bucket")).getId(), properties);
+              final String bucketName = indexJSON.getString("bucket");
+              final Bucket bucket = bucketMap.get(bucketName);
+              if (bucket == null) {
+                orphanIndexes.put(indexName, indexJSON);
+                indexJSON.put("type", typeName);
+                LogManager.instance().log(this, Level.WARNING, "Cannot find bucket '%s' defined in index '%s'. Ignoring it", null, bucketName, index.getName());
+              } else
+                type.addIndexInternal(index, bucket.getId(), properties);
+
             } else {
-              orphanIndexes.put(indexName, index);
-              index.put("type", typeName);
+              orphanIndexes.put(indexName, indexJSON);
+              indexJSON.put("type", typeName);
               LogManager.instance().log(this, Level.WARNING, "Cannot find index '%s' defined in type '%s'. Ignoring it", null, indexName, type);
             }
           }
         }
+
+        type.custom.clear();
+        if (schemaType.has("custom"))
+          type.custom.putAll(schemaType.getJSONObject("custom").toMap());
       }
 
       // ASSOCIATE ORPHAN INDEXES
@@ -1128,7 +1261,7 @@ public class EmbeddedSchema implements Schema {
       for (Map.Entry<String, String[]> entry : parentTypes.entrySet()) {
         final DocumentType type = getType(entry.getKey());
         for (String p : entry.getValue())
-          type.addParentType(getType(p));
+          type.addSuperType(getType(p), false);
       }
 
       loadInRamCompleted = true;
@@ -1151,95 +1284,36 @@ public class EmbeddedSchema implements Schema {
     }
 
     try {
-      final JSONObject root = serializeConfiguration();
+      versionSerial.incrementAndGet();
 
-      final File prevFile = new File(databasePath + "/" + SCHEMA_FILE_NAME);
-      if (prevFile.exists()) {
-        final File copy = new File(databasePath + "/" + SCHEMA_PREV_FILE_NAME);
-        if (copy.exists())
-          if (!copy.delete())
-            LogManager.instance().log(this, Level.WARNING, "Error on deleting previous schema file '%s'", null, copy);
-
-        if (!prevFile.renameTo(copy))
-          LogManager.instance().log(this, Level.WARNING, "Error on renaming previous schema file '%s'", null, copy);
-      }
-
-      final FileWriter file = new FileWriter(databasePath + "/" + SCHEMA_FILE_NAME);
-      file.write(root.toString());
-      file.close();
+      update(toJSON());
 
       dirtyConfiguration = false;
 
     } catch (IOException e) {
-      LogManager.instance().log(this, Level.SEVERE, "Error on saving schema configuration to file: %s", e, databasePath + "/" + SCHEMA_FILE_NAME);
+      LogManager.instance().log(this, Level.SEVERE, "Error on saving schema configuration to file: %s", e, databasePath + File.separator + SCHEMA_FILE_NAME);
     }
   }
 
-  public JSONObject serializeConfiguration() {
+  public synchronized JSONObject toJSON() {
     final JSONObject root = new JSONObject();
-    root.put("version", Constants.getRawVersion());
-    root.put("build", Constants.getBuildNumber());
+    root.put("schemaVersion", versionSerial.get());
+    root.put("dbmsVersion", Constants.getRawVersion());
+    root.put("dbmsBuild", Constants.getBuildNumber());
 
     final JSONObject settings = new JSONObject();
     root.put("settings", settings);
 
-    settings.put("timeZone", timeZone.getDisplayName());
+    settings.put("timeZone", timeZone.getID());
     settings.put("dateFormat", dateFormat);
     settings.put("dateTimeFormat", dateTimeFormat);
 
     final JSONObject types = new JSONObject();
     root.put("types", types);
 
-    for (DocumentType t : this.types.values()) {
-      final JSONObject type = new JSONObject();
-      types.put(t.getName(), type);
+    for (DocumentType t : this.types.values())
+      types.put(t.getName(), t.toJSON());
 
-      final String kind;
-      if (t instanceof VertexType)
-        kind = "v";
-      else if (t instanceof EdgeType)
-        kind = "e";
-      else
-        kind = "d";
-      type.put("type", kind);
-
-      final String[] parents = new String[t.getParentTypes().size()];
-      for (int i = 0; i < parents.length; ++i)
-        parents[i] = t.getParentTypes().get(i).getName();
-      type.put("parents", parents);
-
-      final List<Bucket> originalBuckets = t.getBuckets(false);
-      final String[] buckets = new String[originalBuckets.size()];
-      for (int i = 0; i < buckets.length; ++i)
-        buckets[i] = originalBuckets.get(i).getName();
-
-      type.put("buckets", buckets);
-
-      final JSONObject properties = new JSONObject();
-      type.put("properties", properties);
-
-      for (String propName : t.getPropertyNames()) {
-        final JSONObject prop = new JSONObject();
-        properties.put(propName, prop);
-
-        final Property p = t.getProperty(propName);
-        prop.put("type", p.getType());
-      }
-
-      final JSONObject indexes = new JSONObject();
-      type.put("indexes", indexes);
-
-      for (Index i : t.getAllIndexes(false)) {
-        for (Index entry : ((TypeIndex) i).getIndexesOnBuckets()) {
-          final JSONObject index = new JSONObject();
-          indexes.put(entry.getName(), index);
-
-          index.put("bucket", getBucketById(entry.getAssociatedBucketId()).getName());
-          index.put("properties", entry.getPropertyNames());
-          index.put("nullStrategy", entry.getNullStrategy());
-        }
-      }
-    }
     return root;
   }
 
@@ -1255,7 +1329,76 @@ public class EmbeddedSchema implements Schema {
     files.set(fileId, file);
   }
 
+  public void initComponents() {
+    for (PaginatedComponent f : files)
+      if (f != null)
+        f.onAfterLoad();
+  }
+
   public boolean isDirty() {
     return dirtyConfiguration;
+  }
+
+  public File getConfigurationFile() {
+    return configurationFile;
+  }
+
+  public long getVersion() {
+    return versionSerial.get();
+  }
+
+  private void updateSecurity() {
+    if (security != null)
+      security.updateSchema(database);
+  }
+
+  protected <RET> RET recordFileChanges(final Callable<Object> callback) {
+    if (readingFromFile || !loadInRamCompleted) {
+      try {
+        return (RET) callback.call();
+      } catch (Exception e) {
+        throw new DatabaseOperationException("Error on updating the schema", e);
+      }
+    }
+
+    final boolean madeDirty = !dirtyConfiguration;
+    if (madeDirty)
+      dirtyConfiguration = true;
+
+    boolean executed = false;
+    try {
+      final RET result = database.getWrappedDatabaseInstance().recordFileChanges(callback);
+      executed = true;
+      saveConfiguration();
+      return result;
+
+    } finally {
+      if (!executed && madeDirty)
+        // ROLLBACK THE DIRTY STATUS
+        dirtyConfiguration = false;
+    }
+  }
+
+  public synchronized void update(final JSONObject newSchema) throws IOException {
+    if (newSchema.has("schemaVersion"))
+      versionSerial.set(newSchema.getLong("schemaVersion"));
+
+    final String latestSchema = newSchema.toString();
+
+    if (configurationFile.exists()) {
+      final File copy = new File(databasePath + File.separator + SCHEMA_PREV_FILE_NAME);
+      if (copy.exists())
+        if (!copy.delete())
+          LogManager.instance().log(this, Level.WARNING, "Error on deleting previous schema file '%s'", null, copy);
+
+      if (!configurationFile.renameTo(copy))
+        LogManager.instance().log(this, Level.WARNING, "Error on renaming previous schema file '%s'", null, copy);
+    }
+
+    try (FileWriter file = new FileWriter(databasePath + File.separator + SCHEMA_FILE_NAME)) {
+      file.write(latestSchema);
+    }
+
+    database.getExecutionPlanCache().invalidate();
   }
 }

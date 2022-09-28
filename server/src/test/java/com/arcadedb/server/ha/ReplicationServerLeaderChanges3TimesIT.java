@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.GlobalConfiguration;
@@ -38,17 +35,16 @@ import com.arcadedb.utility.Pair;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT {
   private final AtomicInteger                       messagesInTotal    = new AtomicInteger();
   private final AtomicInteger                       messagesPerRestart = new AtomicInteger();
-  private       AtomicInteger                       restarts           = new AtomicInteger();
-  private       ConcurrentHashMap<Integer, Boolean> semaphore          = new ConcurrentHashMap<>();
+  private final AtomicInteger                       restarts           = new AtomicInteger();
+  private final ConcurrentHashMap<Integer, Boolean> semaphore          = new ConcurrentHashMap<>();
 
   @Override
   public void setTestConfiguration() {
@@ -63,11 +59,10 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
     final String server1Address = getServer(0).getHttpServer().getListeningAddress();
     final String[] server1AddressParts = server1Address.split(":");
 
-    final RemoteDatabase db = new RemoteDatabase(server1AddressParts[0], Integer.parseInt(server1AddressParts[1]), getDatabaseName(), "root", BaseGraphServerTest.DEFAULT_PASSWORD_FOR_TESTS);
+    final RemoteDatabase db = new RemoteDatabase(server1AddressParts[0], Integer.parseInt(server1AddressParts[1]), getDatabaseName(), "root",
+        BaseGraphServerTest.DEFAULT_PASSWORD_FOR_TESTS);
 
-    db.begin();
-
-    LogManager.instance().log(this, Level.INFO, "Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
+    LogManager.instance().log(this, Level.FINE, "Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
 
     long counter = 0;
     final int maxRetry = 10;
@@ -89,8 +84,6 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
             Assertions.assertEquals("distributed-test", result.getProperty("name"));
           }
 
-          db.commit();
-
         } catch (DuplicatedKeyException | NeedRetryException | TimeoutException | TransactionException e) {
           // IGNORE IT
           LogManager.instance().log(this, Level.SEVERE, "Error on creating vertex %d, retrying (retry=%d/%d)...", e, counter, retry, maxRetry);
@@ -104,22 +97,20 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
 
         } catch (Exception e) {
           // IGNORE IT
-          LogManager.instance().log(this, Level.SEVERE, "Generic Exception", e);
+          LogManager.instance().log(this, Level.SEVERE, "Generic Exception: %s", null, e.getMessage());
         }
 
         break;
       }
 
       if (counter % 1000 == 0) {
-        LogManager.instance().log(this, Level.INFO, "- Progress %d/%d", null, counter, (getTxs() * getVerticesPerTx()));
+        LogManager.instance().log(this, Level.FINE, "- Progress %d/%d", null, counter, (getTxs() * getVerticesPerTx()));
         if (isPrintingConfigurationAtEveryStep())
           getLeaderServer().getHA().printClusterConfiguration();
       }
-
-      db.begin();
     }
 
-    LogManager.instance().log(this, Level.INFO, "Done");
+    LogManager.instance().log(this, Level.FINE, "Done");
 
     try {
       Thread.sleep(1000);
@@ -134,7 +125,7 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
 
     onAfterTest();
 
-    LogManager.instance().log(this, Level.INFO, "TEST Restart = %d", null, restarts);
+    LogManager.instance().log(this, Level.FINE, "TEST Restart = %d", null, restarts);
     Assertions.assertTrue(restarts.get() >= getServerCount());
   }
 
@@ -153,7 +144,7 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
           messagesPerRestart.incrementAndGet();
 
           if (getServer(leaderName).isStarted() && messagesPerRestart.get() > getTxs() / (getServerCount() * 2) && restarts.get() < getServerCount()) {
-            LogManager.instance().log(this, Level.INFO, "TEST: Found online replicas %d", null, getServer(leaderName).getHA().getOnlineReplicas());
+            LogManager.instance().log(this, Level.FINE, "TEST: Found online replicas %d", null, getServer(leaderName).getHA().getOnlineReplicas());
 
             if (getServer(leaderName).getHA().getOnlineReplicas() < getServerCount() - 1) {
               // NOT ALL THE SERVERS ARE UP, AVOID A QUORUM ERROR
@@ -173,12 +164,9 @@ public class ReplicationServerLeaderChanges3TimesIT extends ReplicationServerIT 
             restarts.incrementAndGet();
             messagesPerRestart.set(0);
 
-            executeAsynchronously(new Callable() {
-              @Override
-              public Object call() {
-                getServer(leaderName).start();
-                return null;
-              }
+            executeAsynchronously(() -> {
+              getServer(leaderName).start();
+              return null;
             });
           }
         }

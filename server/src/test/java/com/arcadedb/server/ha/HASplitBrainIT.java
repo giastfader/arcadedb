@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.GlobalConfiguration;
@@ -28,11 +25,10 @@ import com.arcadedb.server.TestCallback;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 
-import java.io.IOException;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 /**
  * Simulates a split brain on 5 nodes, by isolating nodes 4th and 5th in a separate network. After 10 seconds, allows the 2 networks to see
@@ -81,7 +77,7 @@ public class HASplitBrainIT extends ReplicationServerIT {
               } else
                 testLog("AFTER REJOINING -> ALLOWED CONNECTION TO THE ADDRESS " + connectTo + "  FROM " + server);
             } else
-              LogManager.instance().log(this, Level.INFO, "ALLOWED CONNECTION FROM SERVER %s TO %s...", null, server.getServerName(), connectTo);
+              LogManager.instance().log(this, Level.FINE, "ALLOWED CONNECTION FROM SERVER %s TO %s...", null, server.getServerName(), connectTo);
           } else {
             // SERVERS 0-2
             if (port == 2427 || port == 2428) {
@@ -91,38 +87,35 @@ public class HASplitBrainIT extends ReplicationServerIT {
               } else
                 testLog("AFTER REJOINING -> ALLOWED CONNECTION TO THE ADDRESS " + connectTo + "  FROM " + server);
             } else
-              LogManager.instance().log(this, Level.INFO, "ALLOWED CONNECTION FROM SERVER %s TO %s...", null, server.getServerName(), connectTo);
+              LogManager.instance().log(this, Level.FINE, "ALLOWED CONNECTION FROM SERVER %s TO %s...", null, server.getServerName(), connectTo);
           }
         }
       }
     });
 
     if (server.getServerName().equals("ArcadeDB_4"))
-      server.registerTestEventListener(new TestCallback() {
-        @Override
-        public void onEvent(final TestCallback.TYPE type, final Object object, final ArcadeDBServer server) {
-          if (!split) {
-            if (type == TYPE.REPLICA_MSG_RECEIVED) {
-              messages.incrementAndGet();
-              if (messages.get() > 10) {
-                split = true;
+      server.registerTestEventListener((type, object, server1) -> {
+        if (!split) {
+          if (type == TestCallback.TYPE.REPLICA_MSG_RECEIVED) {
+            messages.incrementAndGet();
+            if (messages.get() > 10) {
+              split = true;
 
-                testLog("SHUTTING DOWN NETWORK CONNECTION BETWEEN SERVER 0 (THE LEADER) and SERVER 4TH and 5TH...");
-                getServer(3).getHA().getLeader().closeChannel();
-                getServer(0).getHA().getReplica("ArcadeDB_3").closeChannel();
+              testLog("SHUTTING DOWN NETWORK CONNECTION BETWEEN SERVER 0 (THE LEADER) and SERVER 4TH and 5TH...");
+              getServer(3).getHA().getLeader().closeChannel();
+              getServer(0).getHA().getReplica("ArcadeDB_3").closeChannel();
 
-                getServer(4).getHA().getLeader().closeChannel();
-                getServer(0).getHA().getReplica("ArcadeDB_4").closeChannel();
-                testLog("SHUTTING DOWN NETWORK CONNECTION COMPLETED");
+              getServer(4).getHA().getLeader().closeChannel();
+              getServer(0).getHA().getReplica("ArcadeDB_4").closeChannel();
+              testLog("SHUTTING DOWN NETWORK CONNECTION COMPLETED");
 
-                timer.schedule(new TimerTask() {
-                  @Override
-                  public void run() {
-                    testLog("ALLOWING THE REJOINING OF SERVERS 4TH AND 5TH");
-                    rejoining = true;
-                  }
-                }, 10000);
-              }
+              timer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                  testLog("ALLOWING THE REJOINING OF SERVERS 4TH AND 5TH");
+                  rejoining = true;
+                }
+              }, 10000);
             }
           }
         }

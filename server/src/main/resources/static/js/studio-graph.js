@@ -1,342 +1,207 @@
-var globalBgColors = ['aqua', 'orange', 'green', 'purple', 'red', 'lime', 'teal', 'maroon', 'navy', 'olive', 'silver', 'blue', 'yellow', 'fuchsia', 'gray', 'white'];
-var globalFgColors = ['black', 'black', 'white', 'white', 'black', 'black', 'black', 'white', 'white', 'black', 'black', 'white', 'black', 'black', 'white', 'black'];
-var globalColorsIndexByType = {};
+var globalResultset = null;
+var globalBgColors = ['aqua', 'orange', 'green', 'purple', 'lime', 'teal', 'maroon', 'navy', 'olive', 'silver', 'blue', 'yellow', 'fuchsia', 'gray', 'white', 'black'];
+var globalFgColors = ['black', 'black', 'white', 'white', 'black', 'black', 'white', 'white', 'black', 'black', 'white', 'black', 'black', 'white', 'black', 'white'];
+var globalRenderedVerticesRID = {};
+var globalTotalEdges = 0;
 var globalLastColorIndex = 0;
-var globalGraphSpacing = 100;
-var globalGraphLabelPerType = {};
 var globalGraphPropertiesPerType = {};
+var globalLayout = null;
 var globalCy = null;
+var globalSelected = null;
+var globalEnableElementPanel = true;
+var globalGraphSettings = {
+  graphSpacing: 50,
+  cumulativeSelection: false,
+  types: {},
+};
 
-function renderGraph(){
-  let elements = [];
+function toggleSidebar(){
+  $("#graphPropertiesPanel").toggleClass("collapsed");
+  $("#graphMainPanel").toggleClass("col-md-12 col-md-9");
+}
 
-  globalLastColorIndex = 0;
-  globalColorsIndexByType = {};
-  for( i in globalGraphResult.vertices ){
-    let vertex = globalGraphResult.vertices[i];
-    assignVertexColor(vertex.t);
-    assignProperties(vertex);
-  }
+function importGraph(format){
+  var html = "<center><h5>Copy below the "+format.toUpperCase()+" of the graph to import or upload a file</h5>";
+  html += "<input id='uploadFile' type='file' accept='.json, .txt, .js' />";
+  html += "<center><textarea id='importContent' rows='30' cols='75'></textarea><br>";
+  html += "<button id='importGraph' type='button' class='btn btn-primary'><i class='fa fa-upload'></i> Import the graph</button><br>";
+  html += "<div id='importStatus'><span>&nbsp;</span><div></center>";
 
-  for( i in globalGraphResult.edges ){
-    let edge = globalGraphResult.edges[i];
-    assignProperties(edge);
-  }
+  $("#popupBody").html(html);
 
-  let reachedMax = false;
-  for( i in globalGraphResult.vertices ){
-    let vertex = globalGraphResult.vertices[i];
+  $("#importGraph").on( "click", function(){
+    switch( format ) {
+      case "json":
+        globalResultset = JSON.parse( $("#importContent").val() );
 
-    let rid = vertex["r"];
-    if( rid == null )
-      continue;
+        globalGraphSettings = globalResultset.settings;
+        delete globalResultset.settings;
 
-    elements.push( { data: createVertex(vertex) } );
-    if( elements.length > globalGraphMaxResult ){
-      reachedMax = true;
-      break;
-    }
-  }
-
-  if( !reachedMax ) {
-    for( i in globalGraphResult.edges ){
-      elements.push( { data: createEdge( globalGraphResult.edges[i] ) } );
-      if( elements.length > globalGraphMaxResult ){
-        reachedMax = true;
-        break;
-      }
-    }
-  }
-
-  globalLayout = {
-     name: 'cola',
-     animate: true,
-     refresh: 2,
-     ungrabifyWhileSimulating: true,
-     nodeSpacing: function( node ){ return globalGraphSpacing },
-     spacingFactor: 1.75
-   };
-
-  globalCy = cytoscape({
-    container: $('#graph'),
-    elements: elements,
-
-    style: [ // the stylesheet for the graph
-      {
-        selector: 'node',
-        selectionType: 'single',
-        style: {
-          'color': 'data(fgColor)',
-          'background-color': 'data(bgColor)',
-          'label': 'data(label)',
-          'width': 'data(size)',
-          'height': 'data(size)',
-          'border-color': 'gray',
-          'border-width': 1,
-          'text-valign': "center",
-          'text-halign': "center",
-          'text-wrap': 'wrap',
-          'text-max-width': 100
-        }
-      },
-      {
-        selector: 'node:selected',
-        selectionType: 'single',
-        style: {
-          'color': 'data(fgColor)',
-          'background-color': 'data(bgColor)',
-          'label': 'data(label)',
-          'width': 'data(size)',
-          'height': 'data(size)',
-          'border-color': 'red',
-          'border-width': 5,
-          'text-valign': "center",
-          'text-halign': "center",
-          'text-wrap': 'wrap',
-          'text-max-width': 100
-        }
-      },
-      {
-        selector: 'edge',
-        style: {
-          'width': 1,
-          'label': 'data(label)',
-          'color': 'black',
-          'line-color': 'black',
-          'target-arrow-color': 'black',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-          'edge-text-rotation': 'autorotate',
-          'target-arrow-shape': 'triangle',
-          'text-outline-color': "#F7F7F7",
-          'text-outline-width': 8,
-        }
-      }
-    ],
-
-    layout: globalLayout,
-  });
-
-  globalCy.cxtmenu({
-    selector: 'node',
-    menuRadius: function(ele){ return 50; },
-    adaptativeNodeSpotlightRadius: true,
-    openMenuEvents: 'taphold',
-    commands: [
-      {
-        content: '<span class="fa fa-eye-slash fa-2x"></span>',
-        select: function(ele){
-          globalCy.remove( ele );
-        }
-      }, {
-        content: '<span class="fa fa-project-diagram fa-2x"></span>',
-        select: function(ele){
-          loadNodeNeighbors( "both", ele.data('id') );
-        },
-      }, {
-        content: '<span class="fa fa-arrow-circle-right fa-2x"></span>',
-        select: function(ele){
-          loadNodeNeighbors( "out", ele.data('id') );
-        },
-      }, {
-        content: '<span class="fa fa-arrow-circle-left fa-2x"></span>',
-        select: function(ele){
-          loadNodeNeighbors( "in", ele.data('id') );
-        },
-      }
-    ]
-  });
-
-  globalCy.cxtmenu({
-    selector: 'edge',
-    adaptativeNodeSpotlightRadius: false,
-    commands: [
-      {
-        content: '<span class="fa fa-eye-slash fa-2x"></span>',
-        select: function(ele){
-          globalCy.remove( ele );
-        }
-      },
-    ]
-  });
-
-  globalCy.on('select', 'node', function(event){
-    let selected = globalCy.$('node:selected');
-    if( selected.length != 1 ) {
-      $("#customToolbar").empty();
-    } else {
-      let type = selected[0].data()["type"];
-      let customToolbar = type + " label: ";
-
-      properties = globalGraphPropertiesPerType[type];
-
-      let sel = globalGraphLabelPerType[type];
-      if( sel == null )
-        sel = "@type";
-
-      customToolbar += "<select id='customToolbarLabel'>";
-      customToolbar += "<option value='@type'"+(sel == "@type" ? " selected": "" )+">@type</option>" ;
-      for( p in properties ){
-        customToolbar += "<option value='"+p+"'"+(sel == p ? " selected": "" )+">" + p + "</option>" ;
-      }
-      customToolbar += "</select>";
-
-      $("#customToolbar").html(customToolbar);
-
-      $("#customToolbarLabel").change( function(){
-        globalGraphLabelPerType[type] = $("#customToolbarLabel").val();
         renderGraph();
+        break;
+    }
+    renderGraph();
+    $('#popup').modal("hide");
+  });
+
+  const reader = new FileReader();
+  const fileUploader = document.getElementById('uploadFile');
+  fileUploader.addEventListener('change', (event) => {
+    const files = event.target.files;
+    const file = files[0];
+    console.log('files', files);
+
+    if (file.size > 10 * 1024 * 1024) {
+      $("#importStatus").html( "<span style='color:red;'>The maximum file size is 10MB.</span>" );
+      return;
+    } else {
+      $("#importStatus").html( "<span style='color:green;'> The file has been uploaded successfully.</span>" );
+    }
+
+    reader.onload = function() {
+      $("#importContent").val( reader.result );
+    };
+    reader.onerror = function() {
+      $("#importStatus").html( "<span style='color:red;'>Error: "+reader.error+".</span>" );
+    };
+    reader.readAsText(file);
+  });
+
+  $("#popupLabel").text("Import Graph");
+
+  $('#popup').on('shown.bs.modal', function () {
+    $("#importContent").focus();
+  });
+  $('#popup').modal("show");
+}
+
+function exportGraph(format){
+  switch( format ) {
+    case "graphml":
+      globalCy.graphml({
+        node: {
+          css: false,
+          data: true,
+          position: false,
+          discludeds: []
+        },
+        edge: {
+          css: false,
+          data: true,
+          discludeds: []
+        },
+        layoutBy: "cola"
       });
-    }
+
+      let graphml = globalCy.graphml();
+
+      const blob = new Blob([graphml], {type: 'text/xml'});
+      saveAs(blob, "arcade.graphml");
+      break;
+
+    case "json":
+      var json = JSON.parse( JSON.stringify( globalResultset ) );
+      json.records = [];
+      json.settings = globalGraphSettings;
+      var jsonBlob = new Blob([ JSON.stringify( json ) ], { type: 'application/javascript;charset=utf-8' });
+      saveAs( jsonBlob, 'arcadedb-graph.json' );
+      break;
+
+    case "png":
+      var imgBlob = globalCy.png( {"output": "blob"} );
+      saveAs( imgBlob, 'arcadedb-graph.png' );
+      break;
+
+    case "jpeg":
+      var imgBlob = globalCy.jpg( {"output": "blob"} );
+      saveAs( imgBlob, 'arcadedb-graph.jpg' );
+      break;
+  }
+}
+
+function importSettings(){
+  var html = "<center><h5>Copy below the JSON configuration to import or upload a file</h5>";
+  html += "<input id='uploadFile' type='file' accept='.json, .txt, .js' />";
+  html += "<center><textarea id='importContent' rows='30' cols='90'></textarea><br>";
+  html += "<button id='importSettings' type='button' class='btn btn-primary'><i class='fa fa-upload'></i> Import settings</button><br>";
+  html += "<div id='importStatus'><span>&nbsp;</span><div></center>";
+
+  $("#popupBody").html(html);
+
+  $("#importSettings").on( "click", function(){
+    let imported = JSON.parse( $("#importContent").val() );
+    globalGraphSettings = imported;
+    renderGraph();
+    $('#popup').modal("hide");
   });
 
-  if( reachedMax ){
-    globalNotify( "Warning", "Returned more than " + globalGraphMaxResult + " items, partial results will be returned. Consider setting a limit in the query.", "warning");
-  }
-}
+  const reader = new FileReader();
+  const fileUploader = document.getElementById('uploadFile');
+  fileUploader.addEventListener('change', (event) => {
+    const files = event.target.files;
+    const file = files[0];
+    console.log('files', files);
 
-function createVertex(vertex){
-  let label = "@type";
-  if( globalGraphLabelPerType[vertex["t"]] != null )
-    label = globalGraphLabelPerType[vertex["t"]];
-  if( label == "@type" )
-    label = vertex["t"];
-  else
-    label = vertex["p"][label];
+    if (file.size > 1024 * 1024) {
+      $("#importStatus").html( "<span style='color:red;'>The maximum file size is 1MB.</span>" );
+      return;
+    } else {
+      $("#importStatus").html( "<span style='color:green;'> The file has been uploaded successfully.</span>" );
+    }
 
-  let colorIndex = globalColorsIndexByType[ vertex["t"] ];
-
-  return { id: vertex["r"], label: label, size: (70 + ( 2 * label.length ) ), type: vertex["t"],
-           fgColor: globalFgColors[ colorIndex ], bgColor: globalBgColors[ colorIndex ],
-           weight: vertex["i"] + vertex["o"],
-           properties: vertex["p"] };
-}
-
-function createEdge(edge){
-  let label = "@type";
-  if( globalGraphLabelPerType[edge["edge"]] != null )
-    label = globalGraphLabelPerType[vertex["t"]];
-  if( label == "@type" )
-    label = edge["t"];
-  else
-    label = edge["p"][label];
-
-  return { id: edge["r"], label: label, type: edge["t"], source: edge["o"], target: edge["i"], properties: edge["p"] };
-}
-
-function assignVertexColor(type){
-  let color = globalColorsIndexByType[type];
-  if( color == null ){
-    if( globalLastColorIndex >= globalBgColors.length )
-      globalLastColorIndex = 0;
-    globalColorsIndexByType[type] = globalLastColorIndex++;
-  }
-}
-
-function assignProperties(element){
-  let type = element["t"];
-  let properties = globalGraphPropertiesPerType[type];
-  if( properties == null ) {
-    properties = {};
-    globalGraphPropertiesPerType[type] = properties;
-  }
-
-  for( p in element.p )
-    properties[ p ] = true;;
-}
-
-function exportGraph(){
-  globalCy.graphml({
-    node: {
-      css: false,
-      data: true,
-      position: false,
-      discludeds: []
-    },
-    edge: {
-      css: false,
-      data: true,
-      discludeds: []
-    },
-    layoutBy: "cola"
+    reader.onload = function() {
+      $("#importContent").val( reader.result );
+    };
+    reader.onerror = function() {
+      $("#importStatus").html( "<span style='color:red;'>Error: "+reader.error+".</span>" );
+    };
+    reader.readAsText(file);
   });
 
-  let graphml = globalCy.graphml();
+  $("#popupLabel").text("Import Settings");
 
-  const blob = new Blob([graphml], {type: 'text/xml'});
-  if(window.navigator.msSaveOrOpenBlob) {
-    window.navigator.msSaveBlob(blob, filename);
-  } else {
-    const elem = window.document.createElement('a');
-    elem.href = window.URL.createObjectURL(blob);
-    elem.download = "arcade.graphml";
-    document.body.appendChild(elem);
-    elem.click();
-    document.body.removeChild(elem);
-  }
+  $('#popup').on('shown.bs.modal', function () {
+    $("#importContent").focus();
+  });
+  $('#popup').modal("show");
 }
 
-function loadNodeNeighbors( direction, rid ){
-  let database = escapeHtml( $("#inputDatabase").val() );
+function exportSettings(){
+  var html = "<center><h5>This is the JSON configuration exported</h5>";
+  html += "<center><textarea id='exportContent' rows='30' cols='90' readonly></textarea><br>";
+  html += "<button id='popupClipboard' type='button' data-clipboard-target='#exportContent' class='clipboard-trigger btn btn-primary'>";
+  html += "<i class='fa fa-copy'></i> Copy to clipboard and close</button> or ";
+  html += "<button id='downloadFile' type='button' class='btn btn-primary'>";
+  html += "<i class='fa fa-download'></i> Download it</button></center>";
 
-  $("#executeSpinner").show();
+  $("#popupBody").html(html);
 
-  let beginTime = new Date();
+  $("#popupLabel").text("Export Settings");
 
-  jQuery.ajax({
-    type: "POST",
-    url: "/api/v1/command/" + database,
-    data: JSON.stringify(
-      {
-        language: "sql",
-        command: "select "+direction+"E() from " + rid,
-        serializer: "graph"
-      }
-    ),
-    beforeSend: function (xhr){
-      xhr.setRequestHeader('Authorization', globalCredentials);
-    }
-  })
-  .done(function(data){
-    globalCy.startBatch();
+  $("#exportContent").text( JSON.stringify( globalGraphSettings, null, 2 ) );
 
-    for( i in data.result.vertices ){
-      let vertex = data.result.vertices[i];
+  new ClipboardJS("#popupClipboard")
+    .on('success', function(e) {
+      $('#popup').modal("hide")
+    });;
 
-      assignVertexColor(vertex.t);
-      assignProperties(vertex);
-
-      globalGraphResult.vertices.push( vertex );
-      globalCy.add([
-        {
-          group: 'nodes',
-          data: createVertex( vertex )
-        }
-      ]);
-    }
-
-    for( i in data.result.edges ){
-      let edge = data.result.edges[i];
-
-      assignProperties(edge);
-
-      globalGraphResult.edges.push( edge );
-      globalCy.add([
-        {
-          group: 'edges',
-          data: createEdge( edge )
-        }
-      ]);
-    }
-    globalCy.endBatch();
-
-    globalCy.makeLayout(globalLayout).run();
-
-  })
-  .fail(function( jqXHR, textStatus, errorThrown ){
-    globalNotify( "Error", escapeHtml( jqXHR.responseText ), "danger");
-  })
-  .always(function(data) {
-    $("#executeSpinner").hide();
+  $("#downloadFile").on( "click", function(){
+    var jsonBlob = new Blob([ $("#exportContent").val() ], { type: 'application/javascript;charset=utf-8' });
+    saveAs( jsonBlob, 'arcadedb-studio-settings.json' );
+    $('#popup').modal("hide");
   });
+
+  $('#popup').on('shown.bs.modal', function () {
+    $("#exportContent").focus();
+  });
+  $('#popup').modal();
+}
+
+function updateGraphStatus(warning){
+  let html = "Displayed <b>" + Object.keys(globalRenderedVerticesRID).length + "</b> vertices and <b>"+globalTotalEdges+"</b> edges.";
+
+  if( warning != null )
+    html += " <b>WARNING</b>: " + warning;
+
+  $("#graphStatus").html( html );
 }

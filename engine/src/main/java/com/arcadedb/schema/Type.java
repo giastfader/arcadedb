@@ -1,38 +1,41 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.schema;
 
-import com.arcadedb.database.*;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.Document;
+import com.arcadedb.database.EmbeddedDocument;
+import com.arcadedb.database.Identifiable;
+import com.arcadedb.database.ImmutableEmbeddedDocument;
+import com.arcadedb.database.MutableEmbeddedDocument;
+import com.arcadedb.database.RID;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.query.sql.executor.MultiValue;
 import com.arcadedb.serializer.BinaryTypes;
 import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.MultiIterator;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+import java.math.*;
+import java.text.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 /**
  * Generic representation of a type.<br>
@@ -76,11 +79,11 @@ public enum Type {
   ;
 
   // Don't change the order, the type discover get broken if you change the order.
-  protected static final Type[] TYPES = new Type[] { LIST, MAP, LINK, STRING, DATETIME };
+  private static final Type[] TYPES = new Type[] { LIST, MAP, LINK, STRING, DATETIME };
 
-  protected static final Type[]              TYPES_BY_ID       = new Type[17];
-  // Values previosly stored in javaTypes
-  protected static final Map<Class<?>, Type> TYPES_BY_USERTYPE = new HashMap<Class<?>, Type>();
+  private static final Type[]              TYPES_BY_ID       = new Type[17];
+  // Values previously stored in javaTypes
+  private static final Map<Class<?>, Type> TYPES_BY_USERTYPE = new HashMap<Class<?>, Type>();
 
   static {
     for (Type type : values()) {
@@ -342,14 +345,14 @@ public enum Type {
         else if (iValue instanceof String)
           return ((String) iValue).isEmpty() ? 0d : Double.parseDouble((String) iValue);
         else if (iValue instanceof Float)
-          // THIS IS NECESSARY DUE TO A BUG/STRANGE BEHAVIOR OF JAVA BY LOSSING PRECISION
+          // THIS IS NECESSARY DUE TO A BUG/STRANGE BEHAVIOR OF JAVA BY LOSING PRECISION
           return Double.parseDouble(iValue.toString());
         else
           return ((Number) iValue).doubleValue();
 
       } else if (iTargetClass.equals(Boolean.TYPE) || iTargetClass.equals(Boolean.class)) {
         if (iValue instanceof Boolean)
-          return ((Boolean) iValue).booleanValue();
+          return iValue;
         else if (iValue instanceof String) {
           if (((String) iValue).equalsIgnoreCase("true"))
             return Boolean.TRUE;
@@ -364,8 +367,7 @@ public enum Type {
         // we will add all of the items in the collection to a set.  Otherwise
         // we will create a singleton set with only the value in it.
         if (iValue instanceof Collection<?>) {
-          final Set<Object> set = new HashSet<Object>();
-          set.addAll((Collection<? extends Object>) iValue);
+          final Set<Object> set = new HashSet<Object>((Collection<? extends Object>) iValue);
           return set;
         } else {
           return Collections.singleton(iValue);
@@ -376,8 +378,7 @@ public enum Type {
         // we will add all of the items in the collection to a List.  Otherwise
         // we will create a singleton List with only the value in it.
         if (iValue instanceof Collection<?>) {
-          final List<Object> list = new ArrayList<Object>();
-          list.addAll((Collection<? extends Object>) iValue);
+          final List<Object> list = new ArrayList<Object>((Collection<? extends Object>) iValue);
           return list;
         } else {
           return Collections.singletonList(iValue);
@@ -388,8 +389,7 @@ public enum Type {
         // we will return a list if the value is a collection or
         // a singleton set if the value is not a collection.
         if (iValue instanceof Collection<?>) {
-          final List<Object> set = new ArrayList<Object>();
-          set.addAll((Collection<? extends Object>) iValue);
+          final List<Object> set = new ArrayList<Object>((Collection<? extends Object>) iValue);
           return set;
         } else {
           return Collections.singleton(iValue);
@@ -401,12 +401,23 @@ public enum Type {
         if (iValue instanceof Calendar)
           return ((Calendar) iValue).getTime();
         if (iValue instanceof String) {
-          if (FileUtils.isLong(iValue.toString()))
+          final String valueAsString = (String) iValue;
+          if (FileUtils.isLong(valueAsString))
             return new Date(Long.parseLong(iValue.toString()));
-          try {
-            return new SimpleDateFormat(database.getSchema().getDateTimeFormat()).parse((String) iValue);
-          } catch (ParseException ignore) {
-            return new SimpleDateFormat(database.getSchema().getDateFormat()).parse((String) iValue);
+          if (database != null)
+            try {
+              return new SimpleDateFormat(database.getSchema().getDateTimeFormat()).parse(valueAsString);
+            } catch (ParseException ignore) {
+              return new SimpleDateFormat(database.getSchema().getDateFormat()).parse(valueAsString);
+            }
+          else {
+            // GUESS FORMAT BY STRING LENGTH
+            if (valueAsString.length() == "yyyy-MM-dd".length())
+              return new SimpleDateFormat("yyyy-MM-dd").parse(valueAsString);
+            else if (valueAsString.length() == "yyyy-MM-dd HH:mm:ss".length())
+              return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").parse(valueAsString);
+            else if (valueAsString.length() == "yyyy-MM-dd HH:mm:ss.SSS".length())
+              return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS").parse(valueAsString);
           }
         }
       } else if (iTargetClass.equals(Identifiable.class)) {
@@ -517,7 +528,7 @@ public enum Type {
       else if (b instanceof Double)
         return Double.valueOf(a.floatValue() + b.doubleValue());
       else if (b instanceof BigDecimal)
-        return new BigDecimal(a.floatValue()).add((BigDecimal) b);
+        return BigDecimal.valueOf(a.floatValue()).add((BigDecimal) b);
 
     } else if (a instanceof Double) {
       if (b instanceof Integer)
@@ -531,7 +542,7 @@ public enum Type {
       else if (b instanceof Double)
         return Double.valueOf(a.doubleValue() + b.doubleValue());
       else if (b instanceof BigDecimal)
-        return new BigDecimal(a.doubleValue()).add((BigDecimal) b);
+        return BigDecimal.valueOf(a.doubleValue()).add((BigDecimal) b);
 
     } else if (a instanceof BigDecimal) {
       if (b instanceof Integer)
@@ -541,15 +552,124 @@ public enum Type {
       else if (b instanceof Short)
         return ((BigDecimal) a).add(new BigDecimal(b.shortValue()));
       else if (b instanceof Float)
-        return ((BigDecimal) a).add(new BigDecimal(b.floatValue()));
+        return ((BigDecimal) a).add(BigDecimal.valueOf(b.floatValue()));
       else if (b instanceof Double)
-        return ((BigDecimal) a).add(new BigDecimal(b.doubleValue()));
+        return ((BigDecimal) a).add(BigDecimal.valueOf(b.doubleValue()));
       else if (b instanceof BigDecimal)
         return ((BigDecimal) a).add((BigDecimal) b);
 
     }
 
     throw new IllegalArgumentException("Cannot increment value '" + a + "' (" + a.getClass() + ") with '" + b + "' (" + b.getClass() + ")");
+  }
+
+  public static Number decrement(final Number a, final Number b) {
+    if (a == null || b == null)
+      throw new IllegalArgumentException("Cannot decrement a null value");
+
+    if (a instanceof Integer) {
+      if (b instanceof Integer) {
+        final int sum = a.intValue() - b.intValue();
+        if (sum < 0 && a.intValue() > 0 && b.intValue() > 0)
+          // SPECIAL CASE: UPGRADE TO LONG
+          return Long.valueOf(a.intValue() - b.intValue());
+        return sum;
+      } else if (b instanceof Long)
+        return Long.valueOf(a.intValue() - b.longValue());
+      else if (b instanceof Short) {
+        final int sum = a.intValue() - b.shortValue();
+        if (sum < 0 && a.intValue() > 0 && b.shortValue() > 0)
+          // SPECIAL CASE: UPGRADE TO LONG
+          return Long.valueOf(a.intValue() - b.shortValue());
+        return sum;
+      } else if (b instanceof Float)
+        return Float.valueOf(a.intValue() - b.floatValue());
+      else if (b instanceof Double)
+        return Double.valueOf(a.intValue() - b.doubleValue());
+      else if (b instanceof BigDecimal)
+        return new BigDecimal(a.intValue()).subtract((BigDecimal) b);
+
+    } else if (a instanceof Long) {
+      if (b instanceof Integer)
+        return Long.valueOf(a.longValue() - b.intValue());
+      else if (b instanceof Long)
+        return Long.valueOf(a.longValue() - b.longValue());
+      else if (b instanceof Short)
+        return Long.valueOf(a.longValue() - b.shortValue());
+      else if (b instanceof Float)
+        return Float.valueOf(a.longValue() - b.floatValue());
+      else if (b instanceof Double)
+        return Double.valueOf(a.longValue() - b.doubleValue());
+      else if (b instanceof BigDecimal)
+        return new BigDecimal(a.longValue()).subtract((BigDecimal) b);
+
+    } else if (a instanceof Short) {
+      if (b instanceof Integer) {
+        final int sum = a.shortValue() - b.intValue();
+        if (sum < 0 && a.shortValue() > 0 && b.intValue() > 0)
+          // SPECIAL CASE: UPGRADE TO LONG
+          return Long.valueOf(a.shortValue() - b.intValue());
+        return sum;
+      } else if (b instanceof Long)
+        return Long.valueOf(a.shortValue() - b.longValue());
+      else if (b instanceof Short) {
+        final int sum = a.shortValue() - b.shortValue();
+        if (sum < 0 && a.shortValue() > 0 && b.shortValue() > 0)
+          // SPECIAL CASE: UPGRADE TO INTEGER
+          return Integer.valueOf(a.intValue() - b.intValue());
+        return sum;
+      } else if (b instanceof Float)
+        return Float.valueOf(a.shortValue() - b.floatValue());
+      else if (b instanceof Double)
+        return Double.valueOf(a.shortValue() - b.doubleValue());
+      else if (b instanceof BigDecimal)
+        return new BigDecimal(a.shortValue()).subtract((BigDecimal) b);
+
+    } else if (a instanceof Float) {
+      if (b instanceof Integer)
+        return Float.valueOf(a.floatValue() - b.intValue());
+      else if (b instanceof Long)
+        return Float.valueOf(a.floatValue() - b.longValue());
+      else if (b instanceof Short)
+        return Float.valueOf(a.floatValue() - b.shortValue());
+      else if (b instanceof Float)
+        return Float.valueOf(a.floatValue() - b.floatValue());
+      else if (b instanceof Double)
+        return Double.valueOf(a.floatValue() - b.doubleValue());
+      else if (b instanceof BigDecimal)
+        return BigDecimal.valueOf(a.floatValue()).subtract((BigDecimal) b);
+
+    } else if (a instanceof Double) {
+      if (b instanceof Integer)
+        return Double.valueOf(a.doubleValue() - b.intValue());
+      else if (b instanceof Long)
+        return Double.valueOf(a.doubleValue() - b.longValue());
+      else if (b instanceof Short)
+        return Double.valueOf(a.doubleValue() - b.shortValue());
+      else if (b instanceof Float)
+        return Double.valueOf(a.doubleValue() - b.floatValue());
+      else if (b instanceof Double)
+        return Double.valueOf(a.doubleValue() - b.doubleValue());
+      else if (b instanceof BigDecimal)
+        return BigDecimal.valueOf(a.doubleValue()).subtract((BigDecimal) b);
+
+    } else if (a instanceof BigDecimal) {
+      if (b instanceof Integer)
+        return ((BigDecimal) a).subtract(new BigDecimal(b.intValue()));
+      else if (b instanceof Long)
+        return ((BigDecimal) a).subtract(new BigDecimal(b.longValue()));
+      else if (b instanceof Short)
+        return ((BigDecimal) a).subtract(new BigDecimal(b.shortValue()));
+      else if (b instanceof Float)
+        return ((BigDecimal) a).subtract(BigDecimal.valueOf(b.floatValue()));
+      else if (b instanceof Double)
+        return ((BigDecimal) a).subtract(BigDecimal.valueOf(b.doubleValue()));
+      else if (b instanceof BigDecimal)
+        return ((BigDecimal) a).subtract((BigDecimal) b);
+
+    }
+
+    throw new IllegalArgumentException("Cannot decrement value '" + a + "' (" + a.getClass() + ") with '" + b + "' (" + b.getClass() + ")");
   }
 
   public static Number[] castComparableNumber(Number context, Number max) {
@@ -600,14 +720,14 @@ public enum Type {
       if (max instanceof Double)
         context = context.doubleValue();
       else if (max instanceof BigDecimal)
-        context = new BigDecimal(context.floatValue());
+        context = BigDecimal.valueOf(context.floatValue());
       else if (max instanceof Byte || max instanceof Short || max instanceof Integer || max instanceof Long)
         max = max.floatValue();
 
     } else if (context instanceof Double) {
       // DOUBLE
       if (max instanceof BigDecimal)
-        context = new BigDecimal(context.doubleValue());
+        context = BigDecimal.valueOf(context.doubleValue());
       else if (max instanceof Byte || max instanceof Short || max instanceof Integer || max instanceof Long || max instanceof Float)
         max = max.doubleValue();
 
@@ -616,9 +736,9 @@ public enum Type {
       if (max instanceof Integer)
         max = new BigDecimal((Integer) max);
       else if (max instanceof Float)
-        max = new BigDecimal((Float) max);
+        max = BigDecimal.valueOf((Float) max);
       else if (max instanceof Double)
-        max = new BigDecimal((Double) max);
+        max = BigDecimal.valueOf((Double) max);
       else if (max instanceof Short)
         max = new BigDecimal((Short) max);
       else if (max instanceof Byte)
@@ -652,7 +772,7 @@ public enum Type {
     if (iValue instanceof Number)
       return ((Number) iValue).intValue();
     else if (iValue instanceof String)
-      return Integer.valueOf((String) iValue);
+      return Integer.parseInt((String) iValue);
     else if (iValue instanceof Boolean)
       return ((Boolean) iValue) ? 1 : 0;
 
@@ -670,7 +790,7 @@ public enum Type {
     if (iValue instanceof Number)
       return ((Number) iValue).longValue();
     else if (iValue instanceof String)
-      return Long.valueOf((String) iValue);
+      return Long.parseLong((String) iValue);
     else if (iValue instanceof Boolean)
       return ((Boolean) iValue) ? 1 : 0;
 
@@ -688,7 +808,7 @@ public enum Type {
     if (iValue instanceof Number)
       return ((Number) iValue).floatValue();
     else if (iValue instanceof String)
-      return Float.valueOf((String) iValue);
+      return Float.parseFloat((String) iValue);
 
     throw new IllegalArgumentException("Cannot convert value " + iValue + " to float for type: " + name);
   }
@@ -704,7 +824,7 @@ public enum Type {
     if (iValue instanceof Number)
       return ((Number) iValue).doubleValue();
     else if (iValue instanceof String)
-      return Double.valueOf((String) iValue);
+      return Double.parseDouble((String) iValue);
 
     throw new IllegalArgumentException("Cannot convert value " + iValue + " to double for type: " + name);
   }

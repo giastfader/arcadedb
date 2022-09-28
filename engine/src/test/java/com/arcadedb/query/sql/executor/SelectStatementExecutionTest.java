@@ -1,8 +1,27 @@
+/*
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.GlobalConfiguration;
 import com.arcadedb.TestHelper;
 import com.arcadedb.database.Document;
+import com.arcadedb.database.EmbeddedDocument;
 import com.arcadedb.database.Identifiable;
 import com.arcadedb.database.MutableDocument;
 import com.arcadedb.database.RID;
@@ -16,7 +35,7 @@ import com.arcadedb.schema.Type;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.Array;
+import java.lang.reflect.*;
 import java.util.*;
 
 public class SelectStatementExecutionTest extends TestHelper {
@@ -53,11 +72,11 @@ public class SelectStatementExecutionTest extends TestHelper {
     }
 
     database.commit();
-    final ResultSet result = database.query("sql", "select address, count(*) as occurrencies from InputTx where address is not null group by address limit 10");
+    final ResultSet result = database.query("sql", "select address, count(*) as occurrences from InputTx where address is not null group by address limit 10");
     while (result.hasNext()) {
       final Result row = result.next();
       Assertions.assertNotNull(row.getProperty("address")); // <== FALSE!
-      Assertions.assertNotNull(row.getProperty("occurrencies"));
+      Assertions.assertNotNull(row.getProperty("occurrences"));
     }
     result.close();
   }
@@ -599,8 +618,8 @@ public class SelectStatementExecutionTest extends TestHelper {
   }
 
   @Test
-  public void testAggretateMixedWithNonAggregate() {
-    String className = "testAggretateMixedWithNonAggregate";
+  public void testAggregateMixedWithNonAggregate() {
+    String className = "testAggregateMixedWithNonAggregate";
     database.getSchema().createDocumentType(className);
 
     try {
@@ -614,8 +633,8 @@ public class SelectStatementExecutionTest extends TestHelper {
   }
 
   @Test
-  public void testAggretateMixedWithNonAggregateInCollection() {
-    String className = "testAggretateMixedWithNonAggregateInCollection";
+  public void testAggregateMixedWithNonAggregateInCollection() {
+    String className = "testAggregateMixedWithNonAggregateInCollection";
     database.getSchema().createDocumentType(className);
 
     try {
@@ -629,8 +648,8 @@ public class SelectStatementExecutionTest extends TestHelper {
   }
 
   @Test
-  public void testAggretateInCollection() {
-    String className = "testAggretateInCollection";
+  public void testAggregateInCollection() {
+    String className = "testAggregateInCollection";
     database.getSchema().createDocumentType(className);
 
     try {
@@ -644,8 +663,8 @@ public class SelectStatementExecutionTest extends TestHelper {
   }
 
   @Test
-  public void testAggretateMixedWithNonAggregateConstants() {
-    String className = "testAggretateMixedWithNonAggregateConstants";
+  public void testAggregateMixedWithNonAggregateConstants() {
+    String className = "testAggregateMixedWithNonAggregateConstants";
     database.getSchema().createDocumentType(className);
 
     try {
@@ -992,6 +1011,7 @@ public class SelectStatementExecutionTest extends TestHelper {
       Assertions.assertTrue(result.hasNext());
       Result item = result.next();
       Assertions.assertNotNull(item.getProperty("name"));
+      Assertions.assertEquals("STRING", ((List<String>) item.getProperty("keyTypes")).get(0));
     }
     Assertions.assertFalse(result.hasNext());
     result.close();
@@ -2073,7 +2093,7 @@ public class SelectStatementExecutionTest extends TestHelper {
       Assertions.assertNotNull(item.getProperty("iSeq"));
       Integer first = item.getProperty("i");
       Integer second = item.getProperty("iSeq");
-      Assertions.assertTrue(first + second == 0 || second.intValue() % first.intValue() == 0);
+      Assertions.assertTrue(first + second == 0 || second % first == 0);
     }
     Assertions.assertFalse(result.hasNext());
     result.close();
@@ -2107,7 +2127,7 @@ public class SelectStatementExecutionTest extends TestHelper {
       Assertions.assertNotNull(item.getProperty("iSeq"));
       Integer first = item.getProperty("i");
       Integer second = item.getProperty("iSeq");
-      Assertions.assertTrue(first + second == 0 || second.intValue() % first.intValue() == 0);
+      Assertions.assertTrue(first + second == 0 || second % first == 0);
     }
     Assertions.assertFalse(result.hasNext());
     result.close();
@@ -2130,8 +2150,8 @@ public class SelectStatementExecutionTest extends TestHelper {
 
     parentClass.createProperty("name", Type.STRING);
 
-    database.command("sql", "create index " + child1 + ".name on " + child1 + "(name) NOTUNIQUE");
-    database.command("sql", "create index " + child2 + ".name on " + child2 + "(name) NOTUNIQUE");
+    database.command("sql", "create index on " + child1 + "(name) NOTUNIQUE");
+    database.command("sql", "create index on " + child2 + "(name) NOTUNIQUE");
 //        childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
 //        childClass2.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
 
@@ -2171,9 +2191,9 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        DocumentType childClass1 = database.getSchema().createDocumentType(child1, parentClass);
 //        DocumentType childClass2 = database.getSchema().createDocumentType(child2, parentClass);
     DocumentType childClass1 = database.getSchema().createDocumentType(child1);
-    childClass1.addParentType(parentClass);
+    childClass1.addSuperType(parentClass);
     DocumentType childClass2 = database.getSchema().createDocumentType(child2);
-    childClass2.addParentType(parentClass);
+    childClass2.addSuperType(parentClass);
 
     parentClass.createProperty("name", Type.STRING);
     childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
@@ -2217,9 +2237,9 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        DocumentType childClass1 = database.getSchema().createDocumentType(child1, parentClass);
 //        DocumentType childClass2 = database.getSchema().createDocumentType(child2, parentClass);
     DocumentType childClass1 = database.getSchema().createDocumentType(child1);
-    childClass1.addParentType(parentClass);
+    childClass1.addSuperType(parentClass);
     DocumentType childClass2 = database.getSchema().createDocumentType(child2);
-    childClass2.addParentType(parentClass);
+    childClass2.addSuperType(parentClass);
 
     parentClass.createProperty("name", Type.STRING);
     childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
@@ -2262,9 +2282,9 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        DocumentType childClass1 = database.getSchema().createDocumentType(child1, parentClass);
 //        DocumentType childClass2 = database.getSchema().createDocumentType(child2, parentClass);
     DocumentType childClass1 = database.getSchema().createDocumentType(child1);
-    childClass1.addParentType(parent);
+    childClass1.addSuperType(parent);
     DocumentType childClass2 = database.getSchema().createDocumentType(child2);
-    childClass2.addParentType(parent);
+    childClass2.addSuperType(parent);
 
     parentClass.createProperty("name", Type.STRING);
     childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
@@ -2317,13 +2337,13 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        DocumentType childClass2_1 = database.getSchema().createDocumentType(child2_1, childClass2);
 //        DocumentType childClass2_2 = database.getSchema().createDocumentType(child2_2, childClass2);
     DocumentType childClass1 = database.getSchema().createDocumentType(child1);
-    childClass1.addParentType(parent);
+    childClass1.addSuperType(parent);
     DocumentType childClass2 = database.getSchema().createDocumentType(child2);
-    childClass2.addParentType(parent);
+    childClass2.addSuperType(parent);
     DocumentType childClass2_1 = database.getSchema().createDocumentType(child2_1);
-    childClass2_1.addParentType(child2);
+    childClass2_1.addSuperType(child2);
     DocumentType childClass2_2 = database.getSchema().createDocumentType(child2_2);
-    childClass2_2.addParentType(child2);
+    childClass2_2.addSuperType(child2);
 
     childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
     childClass2_1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
@@ -2379,12 +2399,12 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        DocumentType childClass12 =
 //                database.getSchema().createDocumentType(child12, childClass1, childClass2);
     DocumentType childClass1 = database.getSchema().createDocumentType(child1);
-    childClass1.addParentType(parentClass);
+    childClass1.addSuperType(parentClass);
     DocumentType childClass2 = database.getSchema().createDocumentType(child2);
-    childClass2.addParentType(parentClass);
+    childClass2.addSuperType(parentClass);
     DocumentType childClass12 = database.getSchema().createDocumentType(child12);
-    childClass12.addParentType(childClass1);
-    childClass12.addParentType(childClass2);
+    childClass12.addSuperType(childClass1);
+    childClass12.addSuperType(childClass2);
 
     parentClass.createProperty("name", Type.STRING);
     childClass1.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "name");
@@ -2425,14 +2445,14 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort1() {
     String className = "testIndexPlusSort1";
     DocumentType clazz = database.getSchema().createDocumentType(className);
     database.begin();
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2464,7 +2484,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort2() {
     String className = "testIndexPlusSort2";
     DocumentType clazz = database.getSchema().createDocumentType(className);
@@ -2473,7 +2493,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     clazz.createProperty("surname", Type.STRING);
     database.command("sql",
 
-        "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+        "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2505,14 +2525,14 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort3() {
     String className = "testIndexPlusSort3";
     DocumentType clazz = database.getSchema().createDocumentType(className);
     database.begin();
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2544,14 +2564,14 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort4() {
     String className = "testIndexPlusSort4";
     DocumentType clazz = database.getSchema().createDocumentType(className);
     database.begin();
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2583,7 +2603,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort5() {
     String className = "testIndexPlusSort5";
     DocumentType clazz = database.getSchema().createDocumentType(className);
@@ -2591,12 +2611,13 @@ public class SelectStatementExecutionTest extends TestHelper {
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
     clazz.createProperty("address", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname, address) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname, address) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
       doc.set("name", "name" + i % 3);
       doc.set("surname", "surname" + i);
+      doc.set("address", "address" + i);
       doc.save();
     }
     database.commit();
@@ -2622,7 +2643,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort6() {
     String className = "testIndexPlusSort6";
     DocumentType clazz = database.getSchema().createDocumentType(className);
@@ -2630,12 +2651,13 @@ public class SelectStatementExecutionTest extends TestHelper {
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
     clazz.createProperty("address", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname, address) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname, address) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
       doc.set("name", "name" + i % 3);
       doc.set("surname", "surname" + i);
+      doc.set("address", "address" + i);
       doc.save();
     }
     database.commit();
@@ -2661,7 +2683,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO
+  @Test
   public void testIndexPlusSort7() {
     String className = "testIndexPlusSort7";
     DocumentType clazz = database.getSchema().createDocumentType(className);
@@ -2669,12 +2691,13 @@ public class SelectStatementExecutionTest extends TestHelper {
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
     clazz.createProperty("address", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname, address) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname, address) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
       doc.set("name", "name" + i % 3);
       doc.set("surname", "surname" + i);
+      doc.set("address", "address" + i);
       doc.save();
     }
     database.commit();
@@ -2707,7 +2730,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     database.begin();
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2745,7 +2768,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     database.begin();
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2783,7 +2806,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     DocumentType clazz = database.getSchema().createDocumentType(className);
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2821,7 +2844,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     DocumentType clazz = database.getSchema().createDocumentType(className);
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -2852,14 +2875,14 @@ public class SelectStatementExecutionTest extends TestHelper {
     result.close();
   }
 
-  //    @Test  TODO check that index entries are returned in the right order
+  @Test
   public void testIndexPlusSort12() {
     String className = "testIndexPlusSort12";
     database.begin();
     DocumentType clazz = database.getSchema().createDocumentType(className);
     clazz.createProperty("name", Type.STRING);
     clazz.createProperty("surname", Type.STRING);
-    database.command("sql", "create index " + className + ".name_surname on " + className + " (name, surname) NOTUNIQUE");
+    database.command("sql", "create index on " + className + " (name, surname) NOTUNIQUE");
 
     for (int i = 0; i < 10; i++) {
       MutableDocument doc = database.newDocument(className);
@@ -3266,6 +3289,122 @@ public class SelectStatementExecutionTest extends TestHelper {
   }
 
   @Test
+  public void testContainsIntegers() {
+    String className = "testContains";
+
+    DocumentType clazz1 = database.getSchema().createDocumentType(className);
+    clazz1.createProperty("list", Type.LIST);
+
+    database.getSchema().createDocumentType("embeddedList");
+
+    database.transaction(() -> {
+      for (int i = 0; i < 100; i++) {
+        MutableDocument document = database.newDocument(className);
+        document.set("list", new ArrayList<>());
+
+        for (int j = i; j < i + 3; j++)
+          document.newEmbeddedDocument("embeddedList", "list").set("value", j);
+
+        document.save();
+      }
+    });
+
+    int totalFound = 0;
+    for (ResultSet result = database.query("sql", "select from " + className + " where list contains ( value = 3 )"); result.hasNext(); ) {
+      Result item = result.next();
+      List<EmbeddedDocument> embeddedList = item.getProperty("list");
+
+      List<Integer> valueMatches = new ArrayList<>();
+      for (EmbeddedDocument d : embeddedList)
+        valueMatches.add(d.getInteger("value"));
+
+      Assertions.assertTrue(valueMatches.contains(3));
+
+      ++totalFound;
+    }
+
+    Assertions.assertEquals(3, totalFound);
+  }
+
+  @Test
+  public void testContainsStrings() {
+    String className = "testContains";
+
+    DocumentType clazz1 = database.getSchema().createDocumentType(className);
+    clazz1.createProperty("list", Type.LIST);
+
+    database.getSchema().createDocumentType("embeddedList");
+
+    database.transaction(() -> {
+      for (int i = 0; i < 100; i++) {
+        MutableDocument document = database.newDocument(className);
+        document.set("list", new ArrayList<>());
+
+        for (int j = i; j < i + 3; j++)
+          document.newEmbeddedDocument("embeddedList", "list").set("value", "" + j);
+
+        document.save();
+      }
+    });
+
+    int totalFound = 0;
+    for (ResultSet result = database.query("sql", "select from " + className + " where list contains ( value = '3' )"); result.hasNext(); ) {
+      Result item = result.next();
+      List<EmbeddedDocument> embeddedList = item.getProperty("list");
+
+      List<String> valueMatches = new ArrayList<>();
+      for (EmbeddedDocument d : embeddedList)
+        valueMatches.add(d.getString("value"));
+
+      Assertions.assertTrue(valueMatches.contains("3"));
+
+      ++totalFound;
+    }
+
+    Assertions.assertEquals(3, totalFound);
+  }
+
+  @Test
+  public void testContainsStringsInMap() {
+    String className = "testContains";
+
+    DocumentType clazz1 = database.getSchema().createDocumentType(className);
+    clazz1.createProperty("list", Type.LIST);
+
+    database.getSchema().createDocumentType("embeddedList");
+
+    database.transaction(() -> {
+      for (int i = 0; i < 100; i++) {
+        MutableDocument document = database.newDocument(className);
+
+        List<Map> list = new ArrayList<>();
+        document.set("list", list);
+
+        for (int j = i; j < i + 3; j++)
+          list.add(Map.of("value", "" + j));
+
+        document.save();
+      }
+    });
+
+    int totalFound = 0;
+    for (ResultSet result = database.query("sql", "select from " + className + " where list contains ( value = '3' )"); result.hasNext(); ) {
+      Result item = result.next();
+      List<Map> embeddedList = item.getProperty("list");
+
+      List<String> valueMatches = new ArrayList<>();
+      for (Map d : embeddedList)
+        valueMatches.add((String) d.get("value"));
+
+      Assertions.assertTrue(valueMatches.contains("3"));
+
+      ++totalFound;
+    }
+
+    Assertions.assertEquals(3, totalFound);
+  }
+
+  @Test
   public void testIndexPrefixUsage() {
     // issue #7636
     String className = "testIndexPrefixUsage";
@@ -3273,7 +3412,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     database.command("sql", "create document type " + className).close();
     database.command("sql", "create property " + className + ".id LONG").close();
     database.command("sql", "create property " + className + ".name STRING").close();
-    database.command("sql", "create index " + className + ".id_name on " + className + "(id, name) UNIQUE").close();
+    database.command("sql", "create index on " + className + "(id, name) UNIQUE").close();
     database.command("sql", "insert into " + className + " set id = 1 , name = 'Bar'").close();
 
     database.commit();
@@ -3309,7 +3448,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     database.command("sql", "create document type " + className).close();
     database.begin();
     database.command("sql", "create property " + className + ".name STRING").close();
-    database.command("sql", "create index " + className + ".name ON " + className + " (name) NOTUNIQUE").close();
+    database.command("sql", "create index ON " + className + " (name) NOTUNIQUE").close();
     database.command("sql", "insert into " + className + " set name = 'Foo'").close();
     database.command("sql", "insert into " + className + " set name = 'Bar'").close();
     database.commit();
@@ -3663,6 +3802,51 @@ public class SelectStatementExecutionTest extends TestHelper {
     }
   }
 
+  @Test
+  public void testInWithoutIndex() {
+    String className = "testInWithoutIndex";
+    database.begin();
+    DocumentType clazz = database.getSchema().getOrCreateDocumentType(className);
+    Property prop = clazz.createProperty("tag", Type.STRING);
+
+    database.command("sql", "insert into " + className + "  set tag = 'foo'");
+    database.command("sql", "insert into " + className + "  set tag = 'bar'");
+    database.commit();
+
+    try (ResultSet result = database.query("sql", "select from " + className + " where tag in ['foo','baz']")) {
+      Assertions.assertTrue(result.hasNext());
+      result.next();
+      Assertions.assertFalse(result.hasNext());
+      Assertions.assertFalse(result.getExecutionPlan().get().getSteps().stream().anyMatch(x -> x instanceof FetchFromIndexStep));
+    }
+
+    try (ResultSet result = database.query("sql", "select from " + className + " where tag in ['foo','bar']")) {
+      Assertions.assertTrue(result.hasNext());
+      result.next();
+      Assertions.assertTrue(result.hasNext());
+      result.next();
+      Assertions.assertFalse(result.hasNext());
+      Assertions.assertFalse(result.getExecutionPlan().get().getSteps().stream().anyMatch(x -> x instanceof FetchFromIndexStep));
+    }
+
+    try (ResultSet result = database.query("sql", "select from " + className + " where tag in []")) {
+      Assertions.assertFalse(result.hasNext());
+      Assertions.assertFalse(result.getExecutionPlan().get().getSteps().stream().anyMatch(x -> x instanceof FetchFromIndexStep));
+    }
+
+    List<String> params = new ArrayList<>();
+    params.add("foo");
+    params.add("bar");
+    try (ResultSet result = database.query("sql", "select from " + className + " where tag in (?)", params)) {
+      Assertions.assertTrue(result.hasNext());
+      result.next();
+      Assertions.assertTrue(result.hasNext());
+      result.next();
+      Assertions.assertFalse(result.hasNext());
+      Assertions.assertFalse(result.getExecutionPlan().get().getSteps().stream().anyMatch(x -> x instanceof FetchFromIndexStep));
+    }
+  }
+
   //    @Test
   public void testListOfMapsContains() {
     String className = "testListOfMapsContains";
@@ -3835,12 +4019,12 @@ public class SelectStatementExecutionTest extends TestHelper {
 //    @Test
 //    public void testTimeout() {
 //        String className = "testTimeout";
-//        final String funcitonName = getClass().getSimpleName() + "_sleep";
+//        final String functionName = getClass().getSimpleName() + "_sleep";
 //        database.getSchema().createDocumentType(className);
 //
 //        SQLEngine.getInstance()
 //                .registerFunction(
-//                        funcitonName,
+//                        functionName,
 //                        new SQLFunction() {
 //
 //                            @Override
@@ -3872,7 +4056,7 @@ public class SelectStatementExecutionTest extends TestHelper {
 //
 //                            @Override
 //                            public String getName() {
-//                                return funcitonName;
+//                                return functionName;
 //                            }
 //
 //                            @Override
@@ -3915,7 +4099,7 @@ public class SelectStatementExecutionTest extends TestHelper {
 //            doc.save();
 //        }
 //        try (ResultSet result =
-//                     database.query("sql", "select " + funcitonName + "(), * from " + className + " timeout 1")) {
+//                     database.query("sql", "select " + functionName + "(), * from " + className + " timeout 1")) {
 //            while (result.hasNext()) {
 //                result.next();
 //            }
@@ -3925,7 +4109,7 @@ public class SelectStatementExecutionTest extends TestHelper {
 //        }
 //
 //        try (ResultSet result =
-//                     database.query("sql", "select " + funcitonName + "(), * from " + className + " timeout 100")) {
+//                     database.query("sql", "select " + functionName + "(), * from " + className + " timeout 100")) {
 //            while (result.hasNext()) {
 //                result.next();
 //            }
@@ -3991,7 +4175,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     database.command("sql", "create Vertex Type " + classNamePrefix + "Ownership  abstract;").close();
     database.command("sql", "create vertex type " + classNamePrefix + "User ;").close();
     database.command("sql", "create property " + classNamePrefix + "User.id String;").close();
-    database.command("sql", "create index " + classNamePrefix + "User.id ON " + classNamePrefix + "User(id) unique;").close();
+    database.command("sql", "create index ON " + classNamePrefix + "User(id) unique;").close();
     database.command("sql", "create vertex type " + classNamePrefix + "Report extends " + classNamePrefix + "Ownership;").close();
     database.command("sql", "create property " + classNamePrefix + "Report.id String;").close();
     database.command("sql", "create property " + classNamePrefix + "Report.label String;").close();
@@ -4018,7 +4202,7 @@ public class SelectStatementExecutionTest extends TestHelper {
       Assertions.assertFalse(rs.hasNext());
     }
 
-    database.command("sql", "create index " + classNamePrefix + "Report.id ON " + classNamePrefix + "Report(id) unique;").close();
+    database.command("sql", "create index ON " + classNamePrefix + "Report(id) unique;").close();
 
     try (ResultSet rs = database.query("sql",
         "select from " + classNamePrefix + "Report where id in (select out('" + classNamePrefix + "hasOwnership').id from " + classNamePrefix
@@ -4031,7 +4215,7 @@ public class SelectStatementExecutionTest extends TestHelper {
     }
   }
 
-  //    @Test TODO port exclude (!prop) syntax from OrientDB
+  @Test
   public void testExclude() {
     String className = "TestExclude";
     database.begin();
@@ -4051,6 +4235,33 @@ public class SelectStatementExecutionTest extends TestHelper {
 
     printExecutionPlan(result);
     result.close();
+  }
+
+  @Test
+  public void testOrderByLet() {
+    String className = "testOrderByLet";
+    database.setAutoTransaction(true);
+    database.getSchema().createDocumentType(className);
+    MutableDocument doc = database.newDocument(className);
+    doc.set("name", "abbb");
+    doc.save();
+
+    doc = database.newDocument(className);
+    doc.set("name", "baaa");
+    doc.save();
+
+    try (ResultSet result = database.query("sql", "select from " + className + " LET $order = name.substring(1) ORDER BY $order ASC LIMIT 1")) {
+      Assertions.assertTrue(result.hasNext());
+      Result item = result.next();
+      Assertions.assertNotNull(item);
+      Assertions.assertEquals("baaa", item.getProperty("name"));
+    }
+    try (ResultSet result = database.query("sql", "select from " + className + " LET $order = name.substring(1) ORDER BY $order DESC LIMIT 1")) {
+      Assertions.assertTrue(result.hasNext());
+      Result item = result.next();
+      Assertions.assertNotNull(item);
+      Assertions.assertEquals("abbb", item.getProperty("name"));
+    }
   }
 
   public static void printExecutionPlan(ResultSet result) {

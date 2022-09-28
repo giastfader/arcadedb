@@ -1,28 +1,27 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.GlobalConfiguration;
 import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseContext;
+import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.database.Identifiable;
 import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
@@ -37,11 +36,8 @@ import com.arcadedb.server.BaseGraphServerTest;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.logging.*;
 
 public abstract class ReplicationServerIT extends BaseGraphServerTest {
   private static final int DEFAULT_MAX_RETRIES = 30;
@@ -65,7 +61,7 @@ public abstract class ReplicationServerIT extends BaseGraphServerTest {
   }
 
   @Test
-  public void testReplication() {
+  public void testReplication() throws Exception {
     testReplication(0);
   }
 
@@ -79,7 +75,7 @@ public abstract class ReplicationServerIT extends BaseGraphServerTest {
 
     Assertions.assertEquals(1, db.countType(VERTEX1_TYPE_NAME, true), "TEST: Check for vertex count for server" + 0);
 
-    LogManager.instance().log(this, Level.INFO, "TEST: Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
+    LogManager.instance().log(this, Level.FINE, "TEST: Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
 
     final long total = getTxs() * getVerticesPerTx();
     long counter = 0;
@@ -100,7 +96,7 @@ public abstract class ReplicationServerIT extends BaseGraphServerTest {
           break;
 
         } catch (TransactionException | NeedRetryException e) {
-          LogManager.instance().log(this, Level.INFO, "TEST: - RECEIVED ERROR: %s (RETRY %d/%d)", null, e.toString(), retry, getMaxRetry());
+          LogManager.instance().log(this, Level.FINE, "TEST: - RECEIVED ERROR: %s (RETRY %d/%d)", null, e.toString(), retry, getMaxRetry());
           if (retry >= getMaxRetry() - 1)
             throw e;
           counter = lastGoodCounter;
@@ -110,7 +106,7 @@ public abstract class ReplicationServerIT extends BaseGraphServerTest {
       }
 
       if (counter % (total / 10) == 0) {
-        LogManager.instance().log(this, Level.INFO, "TEST: - Progress %d/%d", null, counter, (getTxs() * getVerticesPerTx()));
+        LogManager.instance().log(this, Level.FINE, "TEST: - Progress %d/%d", null, counter, (getTxs() * getVerticesPerTx()));
         if (isPrintingConfigurationAtEveryStep())
           getLeaderServer().getHA().printClusterConfiguration();
       }
@@ -168,58 +164,64 @@ public abstract class ReplicationServerIT extends BaseGraphServerTest {
 
   protected void checkEntriesOnServer(final int s) {
     final Database db = getServerDatabase(s, getDatabaseName());
-    db.begin();
-    try {
-      final long recordInDb = db.countType(VERTEX1_TYPE_NAME, true);
-      Assertions.assertTrue(recordInDb <= 1 + getTxs() * getVerticesPerTx(),
-          "TEST: Check for vertex count for server" + s + " found " + recordInDb + " not less than " + (1 + getTxs() * getVerticesPerTx()));
 
-      final TypeIndex index = db.getSchema().getType(VERTEX1_TYPE_NAME).getPolymorphicIndexByProperties("id");
-      long total = 0;
-      for (IndexCursor it = index.iterator(true); it.hasNext(); ) {
-        it.next();
-        ++total;
+    // RESET ANY PREVIOUS TRANSACTION IN TL. IN CASE OF STOP/CRASH THE TL COULD HAVE AN OLD INSTANCE THAT POINT TO AN OLD SERVER
+    DatabaseContext.INSTANCE.init((DatabaseInternal) db);
+
+    db.transaction(() -> {
+      try {
+        final long recordInDb = db.countType(VERTEX1_TYPE_NAME, true);
+        Assertions.assertTrue(recordInDb <= 1 + getTxs() * getVerticesPerTx(),
+            "TEST: Check for vertex count for server" + s + " found " + recordInDb + " not less than " + (1 + getTxs() * getVerticesPerTx()));
+
+        final TypeIndex index = db.getSchema().getType(VERTEX1_TYPE_NAME).getPolymorphicIndexByProperties("id");
+        long total = 0;
+        for (IndexCursor it = index.iterator(true); it.hasNext(); ) {
+          it.dumpStats();
+          it.next();
+          ++total;
+        }
+
+        LogManager.instance().log(this, Level.FINE, "TEST: Entries in the index (%d) >= records in database (%d)", null, total, recordInDb);
+
+        final Map<RID, Set<String>> ridsFoundInIndex = new HashMap<>();
+        long total2 = 0;
+        long missingsCount = 0;
+
+        for (IndexCursor it = index.iterator(true); it.hasNext(); ) {
+          final Identifiable rid = it.next();
+          ++total2;
+
+          Set<String> rids = ridsFoundInIndex.get(rid);
+          if (rids == null) {
+            rids = new HashSet<>();
+            ridsFoundInIndex.put(rid.getIdentity(), rids);
+          }
+
+          rids.add(index.getName());
+
+          Record record = null;
+          try {
+            record = rid.getRecord(true);
+          } catch (RecordNotFoundException e) {
+            // IGNORE IT, CAUGHT BELOW
+          }
+
+          if (record == null) {
+            LogManager.instance().log(this, Level.FINE, "TEST: - Cannot find record %s in database even if it's present in the index (null)", null, rid);
+            missingsCount++;
+          }
+
+        }
+
+        Assertions.assertEquals(recordInDb, ridsFoundInIndex.size(), "TEST: Found " + missingsCount + " missing records");
+        Assertions.assertEquals(0, missingsCount);
+        Assertions.assertEquals(total, total2);
+
+      } catch (Exception e) {
+        e.printStackTrace();
+        Assertions.fail("TEST: Error on checking on server" + s);
       }
-
-      LogManager.instance().log(this, Level.INFO, "TEST: Entries in the index (%d) >= records in database (%d)", null, total, recordInDb);
-
-      final Map<RID, Set<String>> ridsFoundInIndex = new HashMap<>();
-      long total2 = 0;
-      long missingsCount = 0;
-
-      for (IndexCursor it = index.iterator(true); it.hasNext(); ) {
-        final Identifiable rid = it.next();
-        ++total2;
-
-        Set<String> rids = ridsFoundInIndex.get(rid);
-        if (rids == null) {
-          rids = new HashSet<>();
-          ridsFoundInIndex.put(rid.getIdentity(), rids);
-        }
-
-        rids.add(index.getName());
-
-        Record record = null;
-        try {
-          record = rid.getRecord(true);
-        } catch (RecordNotFoundException e) {
-          // IGNORE IT, CAUGHT BELOW
-        }
-
-        if (record == null) {
-          LogManager.instance().log(this, Level.INFO, "TEST: - Cannot find record %s in database even if it's present in the index (null)", null, rid);
-          missingsCount++;
-        }
-
-      }
-
-      Assertions.assertEquals(recordInDb, ridsFoundInIndex.size(), "TEST: Found " + ridsFoundInIndex + " missing records");
-      Assertions.assertEquals(0, missingsCount);
-      Assertions.assertEquals(total, total2);
-
-    } catch (Exception e) {
-      e.printStackTrace();
-      Assertions.fail("TEST: Error on checking on server" + s);
-    }
+    });
   }
 }

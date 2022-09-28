@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import org.json.JSONObject;
@@ -33,9 +30,9 @@ public class DetachedDocument extends ImmutableDocument {
     init(source);
   }
 
-  private void init(Document sourceDocument) {
+  private void init(final Document sourceDocument) {
     this.map = new LinkedHashMap<>();
-    final Map<String, Object> sourceMap = sourceDocument.toMap();
+    final Map<String, Object> sourceMap = sourceDocument.propertiesAsMap();
     for (Map.Entry<String, Object> entry : sourceMap.entrySet()) {
       Object value = entry.getValue();
 
@@ -45,6 +42,15 @@ public class DetachedDocument extends ImmutableDocument {
           if (embValue instanceof EmbeddedDocument)
             ((List) value).set(i, ((EmbeddedDocument) embValue).detach());
         }
+      } else if (value instanceof Map) {
+        Map<String, Object> map = (Map<String, Object>) value;
+
+        for (String propName : map.keySet()) {
+          final Object embValue = map.get(propName);
+          if (embValue instanceof EmbeddedDocument)
+            map.put(propName, ((EmbeddedDocument) embValue).detach());
+        }
+
       } else if (value instanceof EmbeddedDocument)
         value = ((EmbeddedDocument) value).detach();
 
@@ -58,13 +64,9 @@ public class DetachedDocument extends ImmutableDocument {
   }
 
   @Override
-  public Map<String, Object> toMap() {
-    return new HashMap<>(map);
-  }
-
-  @Override
-  public JSONObject toJSON() {
-    final JSONObject result = new JSONSerializer(database).map2json(map);
+  public synchronized Map<String, Object> toMap() {
+    final Map<String, Object> result = new HashMap<>(map);
+    result.put("@cat", "d");
     result.put("@type", type.getName());
     if (getIdentity() != null)
       result.put("@rid", getIdentity().toString());
@@ -72,11 +74,21 @@ public class DetachedDocument extends ImmutableDocument {
   }
 
   @Override
-  public boolean has(String propertyName) {
+  public synchronized JSONObject toJSON() {
+    final JSONObject result = new JSONSerializer(database).map2json(map);
+    result.put("@cat", "d");
+    result.put("@type", type.getName());
+    if (getIdentity() != null)
+      result.put("@rid", getIdentity().toString());
+    return result;
+  }
+
+  @Override
+  public synchronized boolean has(String propertyName) {
     return map.containsKey(propertyName);
   }
 
-  public Object get(final String propertyName) {
+  public synchronized Object get(final String propertyName) {
     return map.get(propertyName);
   }
 
@@ -86,7 +98,7 @@ public class DetachedDocument extends ImmutableDocument {
   }
 
   @Override
-  public String toString() {
+  public synchronized String toString() {
     final StringBuilder result = new StringBuilder(256);
     if (rid != null)
       result.append(rid);
@@ -114,7 +126,7 @@ public class DetachedDocument extends ImmutableDocument {
   }
 
   @Override
-  public Set<String> getPropertyNames() {
+  public synchronized Set<String> getPropertyNames() {
     return map.keySet();
   }
 

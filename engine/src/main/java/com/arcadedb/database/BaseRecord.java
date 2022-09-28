@@ -1,29 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.exception.RecordNotFoundException;
 import com.arcadedb.graph.Edge;
 import com.arcadedb.graph.Vertex;
+
+import java.util.*;
 
 public abstract class BaseRecord implements Record {
   protected final DatabaseInternal database;
@@ -71,19 +70,17 @@ public abstract class BaseRecord implements Record {
   public boolean equals(final Object o) {
     if (this == o)
       return true;
-    if (o == null || !(o instanceof Identifiable))
+    if (!(o instanceof Identifiable))
       return false;
 
     final RID pRID = ((Identifiable) o).getIdentity();
 
-    return rid != null ? rid.equals(pRID) : pRID == null;
+    return Objects.equals(rid, pRID);
   }
 
   @Override
   public int hashCode() {
-    int result = database.hashCode();
-    result = 31 * result + (rid != null ? rid.hashCode() : 0);
-    return result;
+    return rid.hashCode();
   }
 
   @Override
@@ -116,41 +113,45 @@ public abstract class BaseRecord implements Record {
   @Override
   public Document asDocument(boolean loadContent) {
     if (this instanceof Edge)
-      throw new ClassCastException("Cannot cast an edge to a document");
+      throw new ClassCastException("Cannot cast the edge " + getIdentity() + " to a document");
     if (this instanceof Vertex)
-      throw new ClassCastException("Cannot cast a vertex to a document");
+      throw new ClassCastException("Cannot cast the vertex " + getIdentity() + " to a document");
     throw new ClassCastException("Current record is not a document");
   }
 
   @Override
   public Vertex asVertex() {
     if (this instanceof Edge)
-      throw new ClassCastException("Cannot cast an edge to a vertex");
+      throw new ClassCastException("Cannot cast the edge " + getIdentity() + " to a vertex");
     if (this instanceof Document)
-      throw new ClassCastException("Cannot cast a document to a vertex");
+      throw new ClassCastException("Cannot cast the document " + getIdentity() + " to a vertex");
     throw new ClassCastException("Current record is not a vertex");
   }
 
   @Override
   public Vertex asVertex(final boolean loadContent) {
     if (this instanceof Edge)
-      throw new ClassCastException("Cannot cast an edge to a vertex");
+      throw new ClassCastException("Cannot cast the edge " + getIdentity() + " to a vertex");
     if (this instanceof Document)
-      throw new ClassCastException("Cannot cast a document to a vertex");
+      throw new ClassCastException("Cannot cast the document " + getIdentity() + " to a vertex");
     throw new ClassCastException("Current record is not a vertex");
   }
 
   @Override
   public Edge asEdge() {
     if (this instanceof Vertex)
-      throw new ClassCastException("Cannot cast a vertex to an edge");
+      throw new ClassCastException("Cannot cast the vertex " + getIdentity() + " to an edge");
     if (this instanceof Document)
-      throw new ClassCastException("Cannot cast a document to an edge");
+      throw new ClassCastException("Cannot cast the document " + getIdentity() + " to an edge");
     throw new ClassCastException("Current record is not a edge");
   }
 
   @Override
   public Edge asEdge(boolean loadContent) {
-    throw new UnsupportedOperationException();
+    if (this instanceof Vertex)
+      throw new ClassCastException("Cannot cast the vertex " + getIdentity() + " to an edge");
+    if (this instanceof Document)
+      throw new ClassCastException("Cannot cast the document " + getIdentity() + " to an edge");
+    throw new ClassCastException("Current record is not a edge");
   }
 }

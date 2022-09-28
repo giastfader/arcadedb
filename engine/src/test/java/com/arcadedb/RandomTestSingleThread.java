@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb;
 
 import com.arcadedb.database.Database;
@@ -33,18 +30,15 @@ import com.arcadedb.schema.VertexType;
 import org.junit.jupiter.api.Test;
 import performance.PerformanceTest;
 
-import java.math.BigDecimal;
-import java.util.Date;
-import java.util.Iterator;
-import java.util.Random;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.math.*;
+import java.util.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class RandomTestSingleThread extends TestHelper {
   private static final int CYCLES           = 1500;
   private static final int STARTING_ACCOUNT = 100;
-  private static final int PARALLEL         = Runtime.getRuntime().availableProcessors();
+  private static final int PARALLEL         = 4;
 
   private final AtomicLong otherErrors = new AtomicLong();
   private final AtomicLong mvccErrors  = new AtomicLong();
@@ -68,7 +62,7 @@ public class RandomTestSingleThread extends TestHelper {
 
           final int op = rnd.nextInt(6);
 
-          LogManager.instance().log(this, Level.INFO, "Operation %d %d/%d", null, op, i, CYCLES);
+          LogManager.instance().log(this, Level.INFO, "Operation %d %d/%d", op, i, CYCLES);
 
           switch (op) {
           case 0:
@@ -84,7 +78,7 @@ public class RandomTestSingleThread extends TestHelper {
             Thread.sleep(rnd.nextInt(100));
             break;
           case 5:
-            LogManager.instance().log(this, Level.INFO, "Comitting...");
+            LogManager.instance().log(this, Level.INFO, "Committing...");
             database.commit();
             database.begin();
             break;
@@ -103,7 +97,7 @@ public class RandomTestSingleThread extends TestHelper {
       database.commit();
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
 
       //System.out.println(
       //    "Test finished in " + (System.currentTimeMillis() - begin) + "ms, mvccExceptions=" + mvccErrors.get() + " otherExceptions=" + otherErrors.get());
@@ -117,7 +111,7 @@ public class RandomTestSingleThread extends TestHelper {
   private void createTransactions(Database database) {
     final int txOps = rnd.nextInt(100);
 
-    //LogManager.instance().log(this, Level.INFO, "Creating %d transactions...", null, txOps);
+    //LogManager.instance().log(this, Level.INFO, "Creating %d transactions...", txOps);
 
     for (long txId = 0; txId < txOps; ++txId) {
       final MutableDocument tx = database.newVertex("Transaction");
@@ -138,7 +132,7 @@ public class RandomTestSingleThread extends TestHelper {
 
       if (rnd.nextInt(2) == 0) {
         database.deleteRecord(next);
-        LogManager.instance().log(this, Level.INFO, "Deleted record %s", null, next.getIdentity());
+        LogManager.instance().log(this, Level.INFO, "Deleted record %s", next.getIdentity());
       }
     }
   }
@@ -177,14 +171,14 @@ public class RandomTestSingleThread extends TestHelper {
       accountType.createProperty("surname", String.class);
       accountType.createProperty("registered", Date.class);
 
-      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "Account", new String[] { "id" });
+      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "Account", "id");
 
       final VertexType txType = database.getSchema().createVertexType("Transaction", PARALLEL);
       txType.createProperty("uuid", String.class);
       txType.createProperty("date", Date.class);
       txType.createProperty("amount", BigDecimal.class);
 
-      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "Transaction", new String[] { "uuid" });
+      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "Transaction", "uuid");
 
       final EdgeType edgeType = database.getSchema().createEdgeType("PurchasedBy", PARALLEL);
       edgeType.createProperty("date", Date.class);

@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server;
 
 import com.arcadedb.Constants;
@@ -28,31 +25,33 @@ import com.arcadedb.database.Database;
 import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.database.EmbeddedDatabase;
+import com.arcadedb.exception.CommandExecutionException;
 import com.arcadedb.exception.ConfigurationException;
+import com.arcadedb.exception.DatabaseIsClosedException;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.query.QueryEngineManager;
 import com.arcadedb.server.ha.HAServer;
 import com.arcadedb.server.ha.ReplicatedDatabase;
 import com.arcadedb.server.http.HttpServer;
-import com.arcadedb.server.log.ServerLogger;
 import com.arcadedb.server.security.ServerSecurity;
 import com.arcadedb.server.security.ServerSecurityException;
+import com.arcadedb.server.security.ServerSecurityUser;
+import com.arcadedb.utility.CodeUtils;
 import com.arcadedb.utility.FileUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileFilter;
-import java.io.IOException;
+import java.io.*;
+import java.lang.reflect.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.logging.Level;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
-public class ArcadeDBServer implements ServerLogger {
+public class ArcadeDBServer {
   public enum STATUS {OFFLINE, STARTING, ONLINE, SHUTTING_DOWN}
 
   public static final String                                  CONFIG_SERVER_CONFIGURATION_FILENAME = "config/server-configuration.json";
   private final       ContextConfiguration                    configuration;
-  private final       boolean                                 fileConfiguration;
   private final       String                                  serverName;
   private final       boolean                                 testEnabled;
   private final       Map<String, ServerPlugin>               plugins                              = new LinkedHashMap<>();
@@ -60,20 +59,15 @@ public class ArcadeDBServer implements ServerLogger {
   private             HAServer                                haServer;
   private             ServerSecurity                          security;
   private             HttpServer                              httpServer;
-  private             ConcurrentMap<String, DatabaseInternal> databases                            = new ConcurrentHashMap<>();
-  private             List<TestCallback>                      testEventListeners                   = new ArrayList<>();
+  private final       ConcurrentMap<String, DatabaseInternal> databases                            = new ConcurrentHashMap<>();
+  private final       List<TestCallback>                      testEventListeners                   = new ArrayList<>();
   private volatile    STATUS                                  status                               = STATUS.OFFLINE;
   private             ServerMetrics                           serverMetrics                        = new NoServerMetrics();
 
   public ArcadeDBServer() {
     this.configuration = new ContextConfiguration();
-    this.fileConfiguration = true;
 
-    serverRootPath = configuration.getValueAsString(GlobalConfiguration.SERVER_ROOT_PATH);
-    if (serverRootPath == null) {
-      serverRootPath = new File("config").exists() ? "" : "../";
-      configuration.setValue(GlobalConfiguration.SERVER_ROOT_PATH, serverRootPath);
-    }
+    setRootPath(configuration);
 
     loadConfiguration();
 
@@ -82,14 +76,11 @@ public class ArcadeDBServer implements ServerLogger {
   }
 
   public ArcadeDBServer(final ContextConfiguration configuration) {
-    this.fileConfiguration = false;
     this.configuration = configuration;
     this.serverName = configuration.getValueAsString(GlobalConfiguration.SERVER_NAME);
     this.testEnabled = configuration.getValueAsBoolean(GlobalConfiguration.TEST);
 
-    serverRootPath = configuration.getValueAsString(GlobalConfiguration.SERVER_ROOT_PATH);
-    if (serverRootPath == null)
-      serverRootPath = new File("config").exists() ? "" : "../";
+    setRootPath(configuration);
   }
 
   public static void main(final String[] args) {
@@ -116,19 +107,23 @@ public class ArcadeDBServer implements ServerLogger {
       throw new ServerException("Error on starting the server '" + serverName + "'");
     }
 
-    log(this, Level.INFO, "Starting ArcadeDB Server with plugins %s ...", getPluginNames());
+    LogManager.instance().log(this, Level.INFO, "Starting ArcadeDB Server with plugins %s ...", getPluginNames());
 
     // START METRICS & CONNECTED JMX REPORTER
     if (configuration.getValueAsBoolean(GlobalConfiguration.SERVER_METRICS)) {
       serverMetrics.stop();
       serverMetrics = new JMXServerMetrics();
-      log(this, Level.INFO, "- JMX Metrics Started...");
+      LogManager.instance().log(this, Level.INFO, "- JMX Metrics Started...");
     }
 
     security = new ServerSecurity(this, configuration, serverRootPath + "/config");
     security.startService();
 
     loadDatabases();
+
+    security.loadUsers();
+
+    loadDefaultDatabases();
 
     httpServer = new HttpServer(this);
 
@@ -143,12 +138,12 @@ public class ArcadeDBServer implements ServerLogger {
 
     status = STATUS.ONLINE;
 
-    log(this, Level.INFO, "Available query languages: %s", new QueryEngineManager().getAvailableLanguages());
+    LogManager.instance().log(this, Level.INFO, "Available query languages: %s", new QueryEngineManager().getAvailableLanguages());
 
-    log(this, Level.INFO, "ArcadeDB Server started (CPUs=%d MAXRAM=%s)", Runtime.getRuntime().availableProcessors(),
+    LogManager.instance().log(this, Level.INFO, "ArcadeDB Server started (CPUs=%d MAXRAM=%s)", Runtime.getRuntime().availableProcessors(),
         FileUtils.getSizeAsString(Runtime.getRuntime().maxMemory()));
 
-    log(this, Level.INFO, "Studio web tool available at http://localhost:%d ", httpServer.getPort());
+    LogManager.instance().log(this, Level.INFO, "Studio web tool available at http://localhost:%d ", httpServer.getPort());
 
     try {
       lifecycleEvent(TestCallback.TYPE.SERVER_UP, null);
@@ -191,7 +186,7 @@ public class ArcadeDBServer implements ServerLogger {
 
           plugins.put(pluginName, pluginInstance);
 
-          log(this, Level.INFO, "- %s plugin started", pluginName);
+          LogManager.instance().log(this, Level.INFO, "- %s plugin started", pluginName);
 
         } catch (Exception e) {
           throw new ServerException("Error on loading plugin from class '" + p + ";", e);
@@ -210,37 +205,35 @@ public class ArcadeDBServer implements ServerLogger {
       throw new ServerException("Error on stopping the server '" + serverName + "'");
     }
 
-    log(this, Level.INFO, "Shutting down ArcadeDB Server...");
+    LogManager.instance().log(this, Level.INFO, "Shutting down ArcadeDB Server...");
 
     status = STATUS.SHUTTING_DOWN;
 
     for (Map.Entry<String, ServerPlugin> pEntry : plugins.entrySet()) {
-      log(this, Level.INFO, "- Stop %s plugin", pEntry.getKey());
-      try {
-        pEntry.getValue().stopService();
-      } catch (Exception e) {
-        log(this, Level.SEVERE, "Error on halting %s plugin (error=%s)", pEntry.getKey(), e);
-      }
+      LogManager.instance().log(this, Level.INFO, "- Stop %s plugin", pEntry.getKey());
+      CodeUtils.executeIgnoringExceptions(() -> pEntry.getValue().stopService(), "Error on halting '" + pEntry.getKey() + "' plugin");
     }
 
     if (haServer != null)
-      haServer.stopService();
+      CodeUtils.executeIgnoringExceptions(haServer::stopService, "Error on stopping HA service");
 
     if (httpServer != null)
-      httpServer.stopService();
+      CodeUtils.executeIgnoringExceptions(httpServer::stopService, "Error on stopping HTTP service");
 
     if (security != null)
-      security.stopService();
+      CodeUtils.executeIgnoringExceptions(security::stopService, "Error on stopping Security service");
 
     for (Database db : databases.values())
-      db.close();
+      CodeUtils.executeIgnoringExceptions(db::close, "Error closing database '" + db.getName() + "'");
     databases.clear();
 
-    log(this, Level.INFO, "- Stop JMX Metrics");
-    serverMetrics.stop();
-    serverMetrics = new NoServerMetrics();
+    CodeUtils.executeIgnoringExceptions(() -> {
+      LogManager.instance().log(this, Level.INFO, "- Stop JMX Metrics");
+      serverMetrics.stop();
+      serverMetrics = new NoServerMetrics();
+    }, "Error on stopping JMX Metrics");
 
-    log(this, Level.INFO, "ArcadeDB Server is down");
+    LogManager.instance().log(this, Level.INFO, "ArcadeDB Server is down");
 
     try {
       lifecycleEvent(TestCallback.TYPE.SERVER_DOWN, null);
@@ -261,11 +254,11 @@ public class ArcadeDBServer implements ServerLogger {
   }
 
   public Database getDatabase(final String databaseName) {
-    return getDatabase(databaseName, false);
+    return getDatabase(databaseName, false, true);
   }
 
   public Database getOrCreateDatabase(final String databaseName) {
-    return getDatabase(databaseName, true);
+    return getDatabase(databaseName, true, true);
   }
 
   public boolean isStarted() {
@@ -286,7 +279,7 @@ public class ArcadeDBServer implements ServerLogger {
       throw new IllegalArgumentException("Database '" + databaseName + "' already exists");
 
     final DatabaseFactory factory = new DatabaseFactory(
-        configuration.getValueAsString(GlobalConfiguration.SERVER_DATABASE_DIRECTORY) + "/" + databaseName).setAutoTransaction(true);
+        configuration.getValueAsString(GlobalConfiguration.SERVER_DATABASE_DIRECTORY) + File.separator + databaseName).setAutoTransaction(true);
 
     if (factory.exists())
       throw new IllegalArgumentException("Database '" + databaseName + "' already exists");
@@ -303,50 +296,6 @@ public class ArcadeDBServer implements ServerLogger {
 
   public Set<String> getDatabaseNames() {
     return Collections.unmodifiableSet(databases.keySet());
-  }
-
-  public void log(final Object requester, final Level level, final String message) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object arg1) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null, arg1);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object arg1, final Object arg2) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null, arg1, arg2);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object arg1, final Object arg2, final Object arg3) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null, arg1, arg2, arg3);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object arg1, final Object arg2, final Object arg3, final Object arg4) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null, arg1, arg2, arg3, arg4);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object arg1, final Object arg2, final Object arg3, final Object arg4,
-      final Object arg5) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-    LogManager.instance().log(requester, level, message, null, arg1, arg2, arg3, arg4, arg5);
-  }
-
-  public void log(final Object requester, final Level level, final String message, final Object... args) {
-    if (!serverName.equals(LogManager.instance().getContext()))
-      LogManager.instance().setContext(serverName);
-
-    LogManager.instance().log(requester, level, message, null, args);
   }
 
   public synchronized void removeDatabase(final String databaseName) {
@@ -388,12 +337,18 @@ public class ArcadeDBServer implements ServerLogger {
     return getServerName();
   }
 
-  private synchronized Database getDatabase(final String databaseName, final boolean createIfNotExists) {
+  public synchronized Database getDatabase(final String databaseName, final boolean createIfNotExists, final boolean allowLoad) {
     DatabaseInternal db = databases.get(databaseName);
-    if (db == null || !db.isOpen()) {
 
-      final DatabaseFactory factory = new DatabaseFactory(
-          configuration.getValueAsString(GlobalConfiguration.SERVER_DATABASE_DIRECTORY) + "/" + databaseName).setAutoTransaction(true);
+    if (db == null || !db.isOpen()) {
+      if (!allowLoad)
+        throw new DatabaseIsClosedException("Database '" + databaseName + "' is not available");
+
+      final String path = configuration.getValueAsString(GlobalConfiguration.SERVER_DATABASE_DIRECTORY) + File.separator + databaseName;
+
+      final DatabaseFactory factory = new DatabaseFactory(path).setAutoTransaction(true);
+
+      factory.setSecurity(getSecurity());
 
       if (createIfNotExists)
         db = (DatabaseInternal) (factory.exists() ? factory.open() : factory.create());
@@ -406,7 +361,7 @@ public class ArcadeDBServer implements ServerLogger {
       databases.put(databaseName, db);
     }
 
-    return db;
+    return new ServerDatabase(db);
   }
 
   private void loadDatabases() {
@@ -417,92 +372,140 @@ public class ArcadeDBServer implements ServerLogger {
       if (!databaseDir.isDirectory())
         throw new ConfigurationException("Configured database directory '" + databaseDir + "' is not a directory on file system");
 
-      final File[] databaseDirectories = databaseDir.listFiles(new FileFilter() {
-        @Override
-        public boolean accept(File pathname) {
-          return pathname.isDirectory();
-        }
-      });
-
-      for (File f : databaseDirectories)
-        getDatabase(f.getName());
+      if (configuration.getValueAsBoolean(GlobalConfiguration.SERVER_DATABASE_LOADATSTARTUP)) {
+        final File[] databaseDirectories = databaseDir.listFiles(File::isDirectory);
+        for (File f : databaseDirectories)
+          getDatabase(f.getName());
+      }
     }
+  }
 
+  private void loadDefaultDatabases() {
     final String defaultDatabases = configuration.getValueAsString(GlobalConfiguration.SERVER_DEFAULT_DATABASES);
     if (defaultDatabases != null && !defaultDatabases.isEmpty()) {
       // CREATE DEFAULT DATABASES
       final String[] dbs = defaultDatabases.split(";");
       for (String db : dbs) {
-        final int credentialPos = db.indexOf('[');
-        if (credentialPos < 0) {
-          LogManager.instance().log(this, Level.WARNING, "Error in default databases format: '%s'", null, defaultDatabases);
+        final int credentialBegin = db.indexOf('[');
+        if (credentialBegin < 0) {
+          LogManager.instance().log(this, Level.WARNING, "Error in default databases format: '%s'", defaultDatabases);
           break;
         }
 
-        final String dbName = db.substring(0, credentialPos);
-        final String credentials = db.substring(credentialPos + 1, db.length() - 1);
+        final String dbName = db.substring(0, credentialBegin);
+        final int credentialEnd = db.indexOf(']', credentialBegin);
+        final String credentials = db.substring(credentialBegin + 1, credentialEnd);
 
-        final String[] credentialPairs = credentials.split(",");
-        for (String credential : credentialPairs) {
+        parseCredentials(dbName, credentials);
 
-          final int passwordSeparator = credential.indexOf(":");
+        Database database = existsDatabase(dbName) ? getDatabase(dbName) : null;
 
-          if (passwordSeparator < 0) {
-            if (!security.existsUser(credential)) {
-              LogManager.instance()
-                  .log(this, Level.WARNING, "Cannot create user '%s' to access database '%s' because the user does not exist", null, credential, dbName);
-              continue;
+        if (credentialEnd < db.length() - 1 && db.charAt(credentialEnd + 1) == '{') {
+          // PARSE IMPORTS
+          final String commands = db.substring(credentialEnd + 2, db.length() - 1);
+
+          final String[] commandParts = commands.split(",");
+          for (String command : commandParts) {
+            final int commandSeparator = command.indexOf(":");
+            if (commandSeparator < 0) {
+              LogManager.instance().log(this, Level.WARNING, "Error in startup command configuration format: '%s'", commands);
+              break;
             }
-            //FIXME: else if user exists, should we give him access to the dbName?
-          } else {
-            final String userName = credential.substring(0, passwordSeparator);
-            final String userPassword = credential.substring(passwordSeparator + 1);
+            final String commandType = command.substring(0, commandSeparator).toLowerCase();
+            final String commandParams = command.substring(commandSeparator + 1);
 
-            if (security.existsUser(userName)) {
-              // EXISTING USER: CHECK CREDENTIALS
-              try {
-                final ServerSecurity.ServerUser user = security.authenticate(userName, userPassword);
-                if (!user.databaseBlackList && !user.databases.contains(dbName)) {
-                  // UPDATE DB LIST
-                  user.databases.add(dbName);
-                  try {
-                    security.saveConfiguration();
-                  } catch (IOException e) {
-                    LogManager.instance().log(this, Level.SEVERE, "Cannot create database '%s' because security configuration cannot be saved", e, dbName);
-                    continue;
-                  }
-                }
-
-              } catch (ServerSecurityException e) {
-                LogManager.instance()
-                    .log(this, Level.WARNING, "Cannot create database '%s' because the user '%s' already exists with a different password", null, dbName,
-                        userName);
-                continue;
+            switch (commandType) {
+            case "restore":
+              // DROP THE DATABASE BECAUSE THE RESTORE OPERATION WILL TAKE CARE OF CREATING A NEW DATABASE
+              if (database != null) {
+                ((DatabaseInternal) database).getEmbedded().drop();
+                databases.remove(dbName);
               }
-            } else {
-              // CREATE A NEW USER
-              try {
-                security.createUser(userName, userPassword, false, Collections.singletonList(dbName));
+              String dbPath = configuration.getValueAsString(GlobalConfiguration.SERVER_DATABASE_DIRECTORY) + File.separator + dbName;
+//              new Restore(commandParams, dbPath).restoreDatabase();
 
-              } catch (IOException e) {
-                LogManager.instance().log(this, Level.SEVERE, "Cannot create database '%s' because the new user '%s' cannot be saved", e, dbName, userName);
-                continue;
+              try {
+                final Class<?> clazz = Class.forName("com.arcadedb.integration.restore.Restore");
+                final Object restorer = clazz.getConstructor(String.class, String.class).newInstance(commandParams, dbPath);
+
+                clazz.getMethod("restoreDatabase").invoke(restorer);
+
+              } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | InstantiationException e) {
+                throw new CommandExecutionException("Error on restoring database, restore libs not found in classpath", e);
+              } catch (InvocationTargetException e) {
+                throw new CommandExecutionException("Error on restoring database", e.getTargetException());
               }
+
+              getDatabase(dbName);
+              break;
+
+            case "import":
+              if (database == null) {
+                // CREATE THE DATABASE
+                LogManager.instance().log(this, Level.INFO, "Creating default database '%s'...", null, dbName);
+                database = createDatabase(dbName);
+              }
+              database.command("sql", "import database " + commandParams);
+              break;
+
+            default:
+              LogManager.instance().log(this, Level.SEVERE, "Unsupported command %s in startup command: '%s'", null, commandType);
             }
           }
+        } else {
+          if (database == null) {
+            // CREATE THE DATABASE
+            LogManager.instance().log(this, Level.INFO, "Creating default database '%s'...", null, dbName);
+            createDatabase(dbName);
+          }
         }
+      }
+    }
+  }
 
-        // CREATE THE DATABASE
-        if (!existsDatabase(dbName)) {
-          LogManager.instance().log(this, Level.INFO, "Creating default database '%s'...", null, dbName);
-          createDatabase(dbName);
+  private void parseCredentials(final String dbName, final String credentials) {
+    final String[] credentialPairs = credentials.split(",");
+    for (String credential : credentialPairs) {
+
+      final String[] credentialParts = credential.split(":");
+
+      if (credentialParts.length < 2) {
+        if (!security.existsUser(credential)) {
+          LogManager.instance()
+              .log(this, Level.WARNING, "Cannot create user '%s' to access database '%s' because the user does not exist", null, credential, dbName);
+        }
+        //FIXME: else if user exists, should we give him access to the dbName?
+      } else {
+        final String userName = credentialParts[0];
+        final String userPassword = credentialParts[1];
+        final String userRole = credentialParts.length > 2 ? credentialParts[2] : null;
+
+        if (security.existsUser(userName)) {
+          // EXISTING USER: CHECK CREDENTIALS
+          try {
+            final ServerSecurityUser user = security.authenticate(userName, userPassword, dbName);
+            if (!user.getAuthorizedDatabases().contains(dbName)) {
+              // UPDATE DB LIST
+              user.addDatabase(dbName, new String[] { userRole });
+              security.saveUsers();
+            }
+
+          } catch (ServerSecurityException e) {
+            LogManager.instance()
+                .log(this, Level.WARNING, "Cannot create database '%s' because the user '%s' already exists with a different password", null, dbName, userName);
+          }
+        } else {
+          // CREATE A NEW USER
+          security.createUser(new JSONObject().put("name", userName)//
+              .put("password", security.encodePassword(userPassword))//
+              .put("databases", new JSONObject().put(dbName, new JSONArray())));
         }
       }
     }
   }
 
   private void loadConfiguration() {
-    final File file = new File(getRootPath() + "/" + CONFIG_SERVER_CONFIGURATION_FILENAME);
+    final File file = new File(getRootPath() + File.separator + CONFIG_SERVER_CONFIGURATION_FILENAME);
     if (file.exists()) {
       try {
         final String content = FileUtils.readFileAsString(file, "UTF8");
@@ -515,12 +518,12 @@ public class ArcadeDBServer implements ServerLogger {
     }
   }
 
-  private void saveConfiguration() {
-    final File file = new File(CONFIG_SERVER_CONFIGURATION_FILENAME);
-    try {
-      FileUtils.writeFile(file, configuration.toJSON());
-    } catch (IOException e) {
-      LogManager.instance().log(this, Level.SEVERE, "Error on saving configuration to file '%s'", e, file);
+  private void setRootPath(final ContextConfiguration configuration) {
+    serverRootPath = configuration.getValueAsString(GlobalConfiguration.SERVER_ROOT_PATH);
+    if (serverRootPath == null) {
+      serverRootPath = new File("config").exists() ? "." : new File("../config").exists() ? ".." : ".";
+      configuration.setValue(GlobalConfiguration.SERVER_ROOT_PATH, serverRootPath);
     }
   }
+
 }

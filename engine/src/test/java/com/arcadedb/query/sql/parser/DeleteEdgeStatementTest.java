@@ -1,9 +1,26 @@
+/*
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.arcadedb.query.sql.parser;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
+import java.io.*;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -37,6 +54,7 @@ public class DeleteEdgeStatementTest {
   @Test
   public void testDeleteEdge() {
     checkRightSyntax("DELETE EDGE E");
+    checkRightSyntax("DELETE EDGE #12:0");
     checkRightSyntax("DELETE EDGE E from #12:0");
     checkRightSyntax("DELETE EDGE E to #12:0");
     checkRightSyntax("DELETE EDGE E from #12:0 to #12:1");
@@ -44,7 +62,7 @@ public class DeleteEdgeStatementTest {
         "DELETE EDGE E from (select from V where name = 'foo') to (select from V where name = 'bar')");
 
     checkRightSyntax(
-        "DELETE EDGE E from (select from V where name = 'foo') to (select from V where name = 'bar') BATCH 14");
+        "DELETE EDGE E from (select from V where name = 'foo') to (select from V where name = 'bar')");
 
     checkRightSyntax("DELETE EDGE E where age = 50");
     checkRightSyntax("DELETE EDGE E from #12:0 where age = 50");

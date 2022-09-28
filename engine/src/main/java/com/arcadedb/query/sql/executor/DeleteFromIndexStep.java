@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Identifiable;
@@ -27,12 +24,22 @@ import com.arcadedb.exception.TimeoutException;
 import com.arcadedb.index.Index;
 import com.arcadedb.index.IndexCursor;
 import com.arcadedb.index.RangeIndex;
-import com.arcadedb.query.sql.parser.*;
+import com.arcadedb.query.sql.parser.AndBlock;
+import com.arcadedb.query.sql.parser.BetweenCondition;
+import com.arcadedb.query.sql.parser.BinaryCompareOperator;
+import com.arcadedb.query.sql.parser.BinaryCondition;
+import com.arcadedb.query.sql.parser.BooleanExpression;
+import com.arcadedb.query.sql.parser.EqualsCompareOperator;
+import com.arcadedb.query.sql.parser.Expression;
+import com.arcadedb.query.sql.parser.GeOperator;
+import com.arcadedb.query.sql.parser.GtOperator;
+import com.arcadedb.query.sql.parser.LeOperator;
+import com.arcadedb.query.sql.parser.LtOperator;
+import com.arcadedb.query.sql.parser.PCollection;
 import com.arcadedb.utility.Pair;
 
-import java.io.IOException;
-import java.util.Map;
-import java.util.Optional;
+import java.io.*;
+import java.util.*;
 
 /**
  * Created by luigidellaquila on 11/08/16.
@@ -45,7 +52,7 @@ public class DeleteFromIndexStep extends AbstractExecutionStep {
 
   Pair<Object, Identifiable> nextEntry = null;
 
-  BooleanExpression condition;
+  final BooleanExpression condition;
 
   private boolean     inited = false;
   private IndexCursor cursor;
@@ -108,7 +115,7 @@ public class DeleteFromIndexStep extends AbstractExecutionStep {
 
       @Override
       public Optional<ExecutionPlan> getExecutionPlan() {
-        return null;
+        return Optional.empty();
       }
 
       @Override
@@ -188,15 +195,15 @@ public class DeleteFromIndexStep extends AbstractExecutionStep {
 
     if (index.supportsOrderedIterations()) {
       if (isOrderAsc())
-        cursor = index.range(new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
+        cursor = index.range(true, new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
       else
-        cursor = index.range(new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
+        cursor = index.range(false, new Object[] { thirdValue }, fromKeyIncluded, new Object[] { secondValue }, toKeyIncluded);
     } else if (additional == null && allEqualities((AndBlock) condition)) {
 
       if (isOrderAsc())
-        cursor = index.range(new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
+        cursor = index.range(true, new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
       else
-        cursor = index.range(new Object[] { secondValue }, fromKeyIncluded, new Object[] { thirdValue }, toKeyIncluded);
+        cursor = index.range(false, new Object[] { thirdValue }, fromKeyIncluded, new Object[] { secondValue }, toKeyIncluded);
 
       cursor = index.iterator(isOrderAsc(), new Object[] { secondValue }, true);
     } else {
@@ -231,9 +238,9 @@ public class DeleteFromIndexStep extends AbstractExecutionStep {
     Object secondValue = second.execute((Result) null, ctx);
     Object thirdValue = third.execute((Result) null, ctx);
     if (isOrderAsc())
-      cursor = index.range(new Object[] { secondValue }, true, new Object[] { thirdValue }, true);
+      cursor = index.range(true, new Object[] { secondValue }, true, new Object[] { thirdValue }, true);
     else
-      cursor = index.range(new Object[] { thirdValue }, true, new Object[] { secondValue }, true);
+      cursor = index.range(false, new Object[] { thirdValue }, true, new Object[] { secondValue }, true);
   }
 
   private void processBinaryCondition() {

@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.query.sql.executor;
 
@@ -24,9 +22,8 @@ import com.arcadedb.database.Database;
 import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.database.Document;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.*;
+import java.util.concurrent.atomic.*;
 
 /**
  * Basic implementation of OCommandContext interface that stores variables in a map. Supports parent/child context to build a tree
@@ -36,18 +33,14 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class BasicCommandContext implements CommandContext {
   protected DatabaseInternal    database;
-  protected Object[]            args;
-  protected boolean             recordMetrics = false;
+  protected boolean             recordMetrics           = false;
   protected CommandContext      parent;
   protected CommandContext      child;
   protected Map<String, Object> variables;
-  protected Map<Object, Object> inputParameters;
+  protected Map<String, Object> inputParameters;
+  protected Set<String>         declaredScriptVariables = new HashSet<>();
 
-  // MANAGES THE TIMEOUT
-  private long executionStartedOn;
-  private long timeoutMs;
-
-  protected AtomicLong resultsProcessed = new AtomicLong(0);
+  protected final AtomicLong resultsProcessed = new AtomicLong(0);
 
   public BasicCommandContext() {
   }
@@ -210,7 +203,7 @@ public class BasicCommandContext implements CommandContext {
     if (value == null)
       value = iValue;
     else
-      value = value.longValue() + iValue;
+      value = value + iValue;
     variables.put(iName, value);
     return value;
   }
@@ -284,11 +277,11 @@ public class BasicCommandContext implements CommandContext {
 
   @Override
   public void beginExecution(final long iTimeout, final TIMEOUT_STRATEGY iStrategy) {
-    if (iTimeout > 0) {
-      executionStartedOn = System.currentTimeMillis();
-      timeoutMs = iTimeout;
-//      timeoutStrategy = iStrategy;
-    }
+//    if (iTimeout > 0) {
+    // MANAGES THE TIMEOUT
+    //long executionStartedOn = System.currentTimeMillis();
+    //      timeoutStrategy = iStrategy;
+//    }
   }
 
   public boolean checkTimeout() {
@@ -325,17 +318,12 @@ public class BasicCommandContext implements CommandContext {
     return copy;
   }
 
-  @Override
-  public void merge(final CommandContext iContext) {
-    // TODO: SOME VALUES NEED TO BE MERGED
-  }
-
   private void init() {
     if (variables == null)
       variables = new HashMap<>();
   }
 
-  public Map<Object, Object> getInputParameters() {
+  public Map<String, Object> getInputParameters() {
     if (inputParameters != null) {
       return inputParameters;
     }
@@ -343,9 +331,17 @@ public class BasicCommandContext implements CommandContext {
     return parent == null ? null : parent.getInputParameters();
   }
 
-  public void setInputParameters(Map<Object, Object> inputParameters) {
+  public void setInputParameters(Map<String, Object> inputParameters) {
     this.inputParameters = inputParameters;
+  }
 
+  public void setInputParameters(final Object[] args) {
+    this.inputParameters = new HashMap<>();
+    if (args != null) {
+      for (int i = 0; i < args.length; i++) {
+        this.inputParameters.put(String.valueOf(i), args[i]);
+      }
+    }
   }
 
   /**
@@ -365,7 +361,7 @@ public class BasicCommandContext implements CommandContext {
     return null;
   }
 
-  public void setDatabase(Database database) {
+  public void setDatabase(final Database database) {
     this.database = (DatabaseInternal) database;
   }
 
@@ -390,7 +386,7 @@ public class BasicCommandContext implements CommandContext {
             continue;
           }
           if (iText.charAt(i) == '"' && !singleQuote) {
-            singleQuote = !singleQuote;
+            doubleQuote = !doubleQuote;
             continue;
           }
 
@@ -412,5 +408,27 @@ public class BasicCommandContext implements CommandContext {
         lowest = index;
     }
     return lowest;
+  }
+
+  @Override
+  public void declareScriptVariable(String varName) {
+    this.declaredScriptVariables.add(varName);
+  }
+
+  @Override
+  public boolean isScriptVariableDeclared(String varName) {
+    if (varName == null || varName.length() == 0) {
+      return false;
+    }
+    String dollarVar = varName;
+    if (!dollarVar.startsWith("$")) {
+      dollarVar = "$" + varName;
+    }
+    varName = dollarVar.substring(1);
+    if (variables != null && (variables.containsKey(varName) || variables.containsKey(dollarVar))) {
+      return true;
+    }
+    return declaredScriptVariables.contains(varName) || declaredScriptVariables.contains(dollarVar) || (parent != null && parent.isScriptVariableDeclared(
+        varName));
   }
 }

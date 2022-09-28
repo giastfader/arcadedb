@@ -1,27 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index.lsm;
 
-import com.arcadedb.database.*;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Identifiable;
+import com.arcadedb.database.RID;
+import com.arcadedb.database.TransactionContext;
+import com.arcadedb.database.TransactionIndexContext;
 import com.arcadedb.engine.BasePage;
 import com.arcadedb.engine.PageId;
 import com.arcadedb.index.IndexCursor;
@@ -30,7 +31,7 @@ import com.arcadedb.index.TempIndexCursor;
 import com.arcadedb.serializer.BinaryComparator;
 import com.arcadedb.serializer.BinarySerializer;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 
 /**
@@ -64,12 +65,15 @@ public class LSMTreeIndexCursor implements IndexCursor {
     this.ascendingOrder = ascendingOrder;
     this.keyTypes = index.getKeyTypes();
 
-    final Object[] serializedFromKeys = index.convertKeys(index.checkForNulls(fromKeys), keyTypes);
+    index.checkForNulls(fromKeys);
+    index.checkForNulls(toKeys);
+
+    final Object[] serializedFromKeys = index.convertKeys(fromKeys, keyTypes);
 
     this.fromKeys = fromKeys;
 
     this.toKeys = toKeys != null && toKeys.length == 0 ? null : toKeys;
-    this.serializedToKeys = index.convertKeys(index.checkForNulls(this.toKeys), keyTypes);
+    this.serializedToKeys = index.convertKeys(this.toKeys, keyTypes);
     this.toKeysInclusive = endKeysInclusive;
 
     BinarySerializer serializer = index.getDatabase().getSerializer();
@@ -217,20 +221,30 @@ public class LSMTreeIndexCursor implements IndexCursor {
   public String dumpStats() {
     final StringBuilder buffer = new StringBuilder(1024);
 
-    buffer.append(String.format("\nDUMP OF %s UNDERLYING-CURSORS on index %s", pageCursors.length, index.getName()));
+    buffer.append(String.format("%nDUMP OF %s UNDERLYING-CURSORS on index %s", pageCursors.length, index.getName()));
     for (int i = 0; i < pageCursors.length; ++i) {
       final LSMTreeIndexUnderlyingAbstractCursor cursor = pageCursors[i];
 
       if (cursor == null)
-        buffer.append(String.format("\n- Cursor[%d] = null", i));
+        buffer.append(String.format("%n- Cursor[%d] = null", i));
       else {
-        buffer.append(String.format("\n- Cursor[%d] %s=%s index=%s compacted=%s totalKeys=%d ascending=%s keyTypes=%s currentPageId=%s currentPosInPage=%d", i,
+        buffer.append(String.format("%n- Cursor[%d] %s=%s index=%s compacted=%s totalKeys=%d ascending=%s keyTypes=%s currentPageId=%s currentPosInPage=%d", i,
             Arrays.toString(cursorKeys[i]), Arrays.toString(cursor.getValue()), cursor.index, cursor instanceof LSMTreeIndexUnderlyingCompactedSeriesCursor,
             cursor.totalKeys, cursor.ascendingOrder, Arrays.toString(cursor.keyTypes), cursor.getCurrentPageId(), cursor.getCurrentPositionInPage()));
       }
     }
 
     return buffer.toString();
+  }
+
+  @Override
+  public BinaryComparator getComparator() {
+    return comparator;
+  }
+
+  @Override
+  public byte[] getKeyTypes() {
+    return keyTypes;
   }
 
   @Override
@@ -328,7 +342,7 @@ public class LSMTreeIndexCursor implements IndexCursor {
         for (int k = currentValues.length - 1; k > -1; --k) {
           final RID rid = currentValues[k];
 
-          if (LSMTreeIndexAbstract.REMOVED_ENTRY_RID.equals(rid)) {
+          if (index.REMOVED_ENTRY_RID.equals(rid)) {
             removedEntry = true;
             break;
           }
@@ -396,10 +410,10 @@ public class LSMTreeIndexCursor implements IndexCursor {
     if (index.getDatabase().getTransaction().getStatus() == TransactionContext.STATUS.BEGUN) {
       Set<IndexCursorEntry> txChanges = null;
 
-      final TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>> indexChanges = index.getDatabase().getTransaction()
-          .getIndexChanges().getIndexKeys(index.getName());
+      final TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>> indexChanges = index.getDatabase()
+          .getTransaction().getIndexChanges().getIndexKeys(index.getName());
       if (indexChanges != null) {
-        final Map.Entry<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>> entry;
+        final Map.Entry<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>> entry;
         if (ascendingOrder) {
           if (keys == null)
             entry = indexChanges.firstEntry();
@@ -416,9 +430,9 @@ public class LSMTreeIndexCursor implements IndexCursor {
             entry = indexChanges.lowerEntry(new TransactionIndexContext.ComparableKey(keys));
         }
 
-        final Set<TransactionIndexContext.IndexKey> values = entry != null ? entry.getValue() : null;
+        final Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey> values = entry != null ? entry.getValue() : null;
         if (values != null) {
-          for (final TransactionIndexContext.IndexKey value : values) {
+          for (final TransactionIndexContext.IndexKey value : values.values()) {
             if (value != null) {
               if (!value.addOperation)
                 // REMOVED

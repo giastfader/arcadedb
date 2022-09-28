@@ -1,27 +1,25 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.postgres;
 
 import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseFactory;
 
 import java.nio.ByteBuffer;
 import java.util.Date;
@@ -36,7 +34,6 @@ public enum PostgresType {
   BOOLEAN(16, Boolean.class, 1, -1),  //
   DATE(1082, Date.class, 8, -1), //
   VARCHAR(1043, String.class, -1, -1), //
-  ANY(2276, Object.class, 4, -1) //
   ;
 
   public final int      code;
@@ -59,7 +56,7 @@ public enum PostgresType {
 
     switch (this) {
     case VARCHAR:
-      final byte[] str = value.toString().getBytes();
+      final byte[] str = value.toString().getBytes(DatabaseFactory.getDefaultCharset());
       typeBuffer.putInt(str.length);
       typeBuffer.put(str);
       break;
@@ -103,22 +100,24 @@ public enum PostgresType {
       typeBuffer.putInt(Binary.BYTE_SERIALIZED_SIZE);
       typeBuffer.put((byte) (((Boolean) value) ? 1 : 0));
       break;
-
-    case ANY:
-      typeBuffer.putInt(Binary.INT_SERIALIZED_SIZE);
-      typeBuffer.putInt(((Number) value).intValue());
-      break;
+//
+//    case ANY:
+//      typeBuffer.putInt(Binary.INT_SERIALIZED_SIZE);
+//      typeBuffer.putInt(((Number) value).intValue());
+//      break;
 
     default:
-      throw new PostgresProtocolException("Type " + toString() + " not supported for serializing");
+      throw new PostgresProtocolException("Type " + this + " not supported for serializing");
     }
   }
 
   public static Object deserialize(final long code, final int formatCode, final byte[] valueAsBytes) {
     switch (formatCode) {
     case 0:
-      final String str = new String(valueAsBytes);
-      if (code == VARCHAR.code)
+      final String str = new String(valueAsBytes, DatabaseFactory.getDefaultCharset());
+      if (code == 0) // UNSPECIFIED
+        return str;
+      else if (code == VARCHAR.code)
         return str;
       else if (code == SMALLINT.code)
         return Short.parseShort(str);
@@ -136,8 +135,8 @@ public enum PostgresType {
         return str.charAt(0);
       else if (code == BOOLEAN.code)
         return str.equalsIgnoreCase("true");
-      else if (code == ANY.code)
-        return Integer.parseInt(str);
+//      else if (code == ANY.code)
+//        return Integer.parseInt(str);
       else
         throw new PostgresProtocolException("Type with code " + code + " not supported for deserializing");
 
@@ -165,8 +164,8 @@ public enum PostgresType {
         return typeBuffer.getChar();
       else if (code == BOOLEAN.code)
         return typeBuffer.get() == 1;
-      else if (code == ANY.code)
-        return typeBuffer.getInt();
+//      else if (code == ANY.code)
+//        return typeBuffer.getInt();
       else
         throw new PostgresProtocolException("Type with code " + code + " not supported for deserializing");
 

@@ -1,38 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.serializer;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.Identifiable;
+import com.arcadedb.utility.CollectionUtils;
 
-import java.math.BigDecimal;
-import java.util.Calendar;
-import java.util.Date;
+import java.math.*;
+import java.util.*;
 
 public class BinaryComparator {
 
-  private final          BinarySerializer serializer;
-  protected static final long             MILLISEC_PER_DAY = 86400000;
+  private final BinarySerializer serializer;
 
   public BinaryComparator(final BinarySerializer serializer) {
     this.serializer = serializer;
@@ -114,7 +111,8 @@ public class BinaryComparator {
       break;
     }
 
-    case BinaryTypes.TYPE_STRING: {
+    case BinaryTypes.TYPE_STRING:
+    case BinaryTypes.TYPE_UUID: {
       return equals(value1, value2.toString());
     }
 
@@ -224,9 +222,12 @@ public class BinaryComparator {
     case BinaryTypes.TYPE_BINARY: {
       switch (type2) {
       case BinaryTypes.TYPE_BINARY: {
+        final byte[] v1 = value1 instanceof Binary ? ((Binary) value1).getContent() : (byte[]) value1;
+        final byte[] v2 = value2 instanceof Binary ? ((Binary) value2).getContent() : (byte[]) value2;
+        equalsBytes(v1, v2);
       }
       }
-      throw new UnsupportedOperationException("Comparing binary types");
+      break;
     }
 
     case BinaryTypes.TYPE_DECIMAL: {
@@ -252,6 +253,47 @@ public class BinaryComparator {
       }
       break;
     }
+
+    case BinaryTypes.TYPE_COMPRESSED_STRING: {
+      switch (type2) {
+      case BinaryTypes.TYPE_COMPRESSED_STRING:
+        return value1.equals(value2);
+      }
+      break;
+    }
+
+    case BinaryTypes.TYPE_LIST: {
+      switch (type2) {
+      case BinaryTypes.TYPE_LIST:
+        return value1.equals(value2);
+      }
+      break;
+    }
+
+    case BinaryTypes.TYPE_MAP: {
+      switch (type2) {
+      case BinaryTypes.TYPE_MAP:
+        return value1.equals(value2);
+      }
+      break;
+    }
+
+    case BinaryTypes.TYPE_EMBEDDED: {
+      switch (type2) {
+      case BinaryTypes.TYPE_EMBEDDED:
+        return value1.equals(value2);
+      }
+      break;
+    }
+
+    case BinaryTypes.TYPE_NULL: {
+      switch (type2) {
+      case BinaryTypes.TYPE_NULL: {
+        return true;
+      }
+      }
+      break;
+    }
     }
 
     return false;
@@ -262,7 +304,7 @@ public class BinaryComparator {
    */
   public static int compareTo(final Object a, final Object b) {
     if (a instanceof String && b instanceof String)
-      return compareBytes(((String) a).getBytes(), ((String) b).getBytes());
+      return compareBytes(((String) a).getBytes(), ((String) b).getBytes(DatabaseFactory.getDefaultCharset()));
     if (a instanceof byte[] && b instanceof byte[])
       return compareBytes((byte[]) a, (byte[]) b);
     return ((Comparable<Object>) a).compareTo(b);
@@ -277,12 +319,23 @@ public class BinaryComparator {
   }
 
   public static boolean equalsString(final String buffer1, final String buffer2) {
-    return equalsBytes(buffer1.getBytes(), buffer2.getBytes());
+    if (buffer1 == null || buffer2 == null)
+      return false;
+
+    return equalsBytes(buffer1.getBytes(DatabaseFactory.getDefaultCharset()), buffer2.getBytes(DatabaseFactory.getDefaultCharset()));
   }
 
   public static boolean equalsBytes(final byte[] buffer1, final byte[] buffer2) {
+    if (buffer1 == null || buffer2 == null)
+      return false;
+
     if (buffer1.length != buffer2.length)
       return false;
+
+    if (buffer1[buffer1.length - 1] != buffer2[buffer2.length - 1])
+      // OPTIMIZATION: CHECK THE LAST BYTE IF IT'S THE SAME FIRST
+      return false;
+
     return compareBytes(buffer1, buffer2) == 0;
   }
 
@@ -344,6 +397,13 @@ public class BinaryComparator {
   }
 
   public int compare(final Object value1, final byte type1, final Object value2, final byte type2) {
+    if (value1 == null) {
+      if (value2 == null)
+        return 0;
+      else
+        return -1;
+    } else if (value2 == null)
+      return 1;
 
     switch (type1) {
     case BinaryTypes.TYPE_INT: {
@@ -447,7 +507,7 @@ public class BinaryComparator {
         if (value2 instanceof byte[])
           return UnsignedBytesComparator.BEST_COMPARATOR.compare((byte[]) value1, (byte[]) value2);
         else
-          return UnsignedBytesComparator.BEST_COMPARATOR.compare((byte[]) value1, ((String) value2).getBytes());
+          return UnsignedBytesComparator.BEST_COMPARATOR.compare((byte[]) value1, ((String) value2).getBytes(DatabaseFactory.getDefaultCharset()));
       }
 
       return ((String) value1).compareTo(value2.toString());
@@ -674,9 +734,17 @@ public class BinaryComparator {
         return ((Identifiable) value1).getIdentity().compareTo((Identifiable) value2);
       }
     }
+
+    case BinaryTypes.TYPE_LIST: {
+      switch (type2) {
+      case BinaryTypes.TYPE_LIST:
+        return CollectionUtils.compare((List) value1, (List) value2);
+      }
+      break;
     }
 
-    // NO COMPARE SUPPORTED, RETURN NON EQUALS
+    }
+
     throw new IllegalArgumentException("Comparison between type " + type1 + " and " + type2 + " not supported");
   }
 }

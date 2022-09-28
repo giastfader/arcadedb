@@ -1,40 +1,45 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.GlobalConfiguration;
-import com.arcadedb.engine.*;
+import com.arcadedb.engine.BasePage;
+import com.arcadedb.engine.Bucket;
+import com.arcadedb.engine.MutablePage;
+import com.arcadedb.engine.PageId;
+import com.arcadedb.engine.PageManager;
+import com.arcadedb.engine.PaginatedComponent;
+import com.arcadedb.engine.PaginatedFile;
+import com.arcadedb.engine.TransactionManager;
+import com.arcadedb.engine.WALFile;
 import com.arcadedb.exception.ConcurrentModificationException;
 import com.arcadedb.exception.DuplicatedKeyException;
+import com.arcadedb.exception.RecordNotFoundException;
 import com.arcadedb.exception.SchemaException;
 import com.arcadedb.exception.TransactionException;
-import com.arcadedb.index.Index;
+import com.arcadedb.index.IndexInternal;
 import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.utility.Pair;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 /**
  * Manage the transaction context. When the transaction begins, the modifiedPages map is initialized. This allows to always delegate
@@ -57,15 +62,25 @@ public class TransactionContext implements Transaction {
   private       boolean                  useWAL;
   private       boolean                  asyncFlush            = true;
   private       WALFile.FLUSH_TYPE       walFlush;
-  private       Collection<Integer>      lockedFiles;
+  private       List<Integer>            lockedFiles;
   private       long                     txId                  = -1;
   private       STATUS                   status                = STATUS.INACTIVE;
   // KEEPS TRACK OF MODIFIED RECORD IN TX. AT 1ST PHASE COMMIT TIME THE RECORD ARE SERIALIZED AND INDEXES UPDATED. THIS DEFERRING IMPROVES SPEED ESPECIALLY
   // WITH GRAPHS WHERE EDGES ARE CREATED AND CHUNKS ARE UPDATED MULTIPLE TIMES IN THE SAME TX
   // TODO: OPTIMIZE modifiedRecordsCache STRUCTURE, MAYBE JOIN IT WITH UPDATED RECORDS?
-  private       Set<Record>              updatedRecords        = null;
+  private       Map<RID, Record>         updatedRecords        = null;
 
   public enum STATUS {INACTIVE, BEGUN, COMMIT_1ST_PHASE, COMMIT_2ND_PHASE}
+
+  public static class TransactionPhase1 {
+    public final Binary            result;
+    public final List<MutablePage> modifiedPages;
+
+    public TransactionPhase1(final Binary result, final List<MutablePage> modifiedPages) {
+      this.result = result;
+      this.modifiedPages = modifiedPages;
+    }
+  }
 
   public TransactionContext(final DatabaseInternal database) {
     this.database = database;
@@ -96,17 +111,17 @@ public class TransactionContext implements Transaction {
     if (status != STATUS.BEGUN)
       throw new TransactionException("Transaction already in commit phase");
 
-    final Pair<Binary, List<MutablePage>> changes = commit1stPhase(true);
+    final TransactionPhase1 phase1 = commit1stPhase(true);
 
-    if (changes != null)
-      commit2ndPhase(changes);
+    if (phase1 != null)
+      commit2ndPhase(phase1);
     else
       reset();
 
     if (database.getSchema().getEmbedded().isDirty())
       database.getSchema().getEmbedded().saveConfiguration();
 
-    return changes != null ? changes.getFirst() : null;
+    return phase1 != null ? phase1.result : null;
   }
 
   public Record getRecordFromCache(final RID rid) {
@@ -146,21 +161,18 @@ public class TransactionContext implements Transaction {
         .removeIf(r -> r.getIdentity().getBucketId() == bucketId && r.getIdentity().getPosition() / bucket.getMaxRecordsInPage() == pageNum);
   }
 
-  public void removeRecordFromCache(final Record record) {
+  public void removeRecordFromCache(final RID rid) {
     if (updatedRecords != null)
-      updatedRecords.remove(record);
+      updatedRecords.remove(rid);
 
     if (database.isReadYourWrites()) {
-      final RID rid = record.getIdentity();
       if (rid == null)
-        throw new IllegalArgumentException("Cannot remove record in TX cache because it is not persistent: " + record);
+        throw new IllegalArgumentException("Cannot remove record in TX cache because it is not persistent: " + rid);
       modifiedRecordsCache.remove(rid);
       immutableRecordsCache.remove(rid);
-      if (updatedRecords != null)
-        updatedRecords.remove(record);
     }
 
-    removeImmutableRecordsOfSamePage(record.getIdentity());
+    removeImmutableRecordsOfSamePage(rid);
   }
 
   public DatabaseInternal getDatabase() {
@@ -179,7 +191,7 @@ public class TransactionContext implements Transaction {
 
   @Override
   public void rollback() {
-    LogManager.instance().log(this, Level.FINE, "Rollback transaction newPages=%s modifiedPages=%s (threadId=%d)", null, newPages, modifiedPages,
+    LogManager.instance().log(this, Level.FINE, "Rollback transaction newPages=%s modifiedPages=%s (threadId=%d)", newPages, modifiedPages,
         Thread.currentThread().getId());
 
     if (database.isOpen() && database.getSchema().getDictionary() != null) {
@@ -224,8 +236,8 @@ public class TransactionContext implements Transaction {
     final RID rid = record.getIdentity();
 
     if (updatedRecords == null)
-      updatedRecords = new HashSet<>();
-    if (updatedRecords.add(record))
+      updatedRecords = new HashMap<>();
+    if (updatedRecords.put(record.getIdentity(), record) == null)
       database.getSchema().getBucketById(rid.getBucketId()).fetchPageInTransaction(rid);
     updateRecordInCache(record);
     removeImmutableRecordsOfSamePage(record.getIdentity());
@@ -320,8 +332,9 @@ public class TransactionContext implements Transaction {
     if (modifiedPages != null)
       for (PageId pid : modifiedPages.keySet())
         involvedFiles.add(pid.getFileId());
-    for (PageId pid : newPages.keySet())
-      involvedFiles.add(pid.getFileId());
+    if (newPages != null)
+      for (PageId pid : newPages.keySet())
+        involvedFiles.add(pid.getFileId());
     involvedFiles.addAll(newPageCounters.keySet());
 
     map.put("status", status.name());
@@ -358,7 +371,8 @@ public class TransactionContext implements Transaction {
    * Executes 1st phase from a replica.
    */
   public void commitFromReplica(final WALFile.WALTransaction buffer,
-      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> keysTx) throws TransactionException {
+      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> keysTx)
+      throws TransactionException {
 
     final int totalImpactedPages = buffer.pages.length;
     if (totalImpactedPages == 0 && keysTx.isEmpty()) {
@@ -376,6 +390,9 @@ public class TransactionContext implements Transaction {
 
       indexChanges.setKeys(keysTx);
       indexChanges.addFilesToLock(modifiedFiles);
+
+      final int dictionaryFileId = database.getSchema().getDictionary().getId();
+      boolean dictionaryModified = false;
 
       for (WALFile.WALPage p : buffer.pages) {
         final PaginatedFile file = database.getFileManager().getFile(p.fileId);
@@ -396,9 +413,15 @@ public class TransactionContext implements Transaction {
           newPageCounters.put(pageId.getFileId(), pageId.getPageNumber() + 1);
         } else
           modifiedPages.put(pageId, page);
+
+        if (!dictionaryModified && dictionaryFileId == pageId.getFileId())
+          dictionaryModified = true;
       }
 
       database.commit();
+
+      if (dictionaryModified)
+        database.getSchema().getDictionary().reload();
 
     } catch (ConcurrentModificationException e) {
       rollback();
@@ -412,7 +435,7 @@ public class TransactionContext implements Transaction {
   /**
    * Locks the files in order, then checks all the pre-conditions.
    */
-  public Pair<Binary, List<MutablePage>> commit1stPhase(final boolean isLeader) {
+  public TransactionPhase1 commit1stPhase(final boolean isLeader) {
     if (status == STATUS.INACTIVE)
       throw new TransactionException("Transaction not started");
 
@@ -420,8 +443,13 @@ public class TransactionContext implements Transaction {
       throw new TransactionException("Transaction in phase " + status);
 
     if (updatedRecords != null) {
-      for (Record rec : updatedRecords)
-        database.updateRecordNoLock(rec);
+      for (Record rec : updatedRecords.values())
+        try {
+          database.updateRecordNoLock(rec, false);
+        } catch (RecordNotFoundException e) {
+          // DELETED IN TRANSACTION, THIS IS FULLY MANAGED TO NEVER HAPPEN, BUT IF IT DOES DUE TO THE INTRODUCTION OF A BUG, JUST LOG SOMETHING AND MOVE ON
+          LogManager.instance().log(this, Level.WARNING, "Attempt to update the delete record %s in transaction", rec.getIdentity());
+        }
       updatedRecords = null;
     }
 
@@ -448,7 +476,6 @@ public class TransactionContext implements Transaction {
 
       // CHECK THE VERSIONS FIRST
       final List<MutablePage> pages = new ArrayList<>();
-
       final PageManager pageManager = database.getPageManager();
 
       for (final Iterator<MutablePage> it = modifiedPages.values().iterator(); it.hasNext(); ) {
@@ -476,13 +503,11 @@ public class TransactionContext implements Transaction {
 
       if (useWAL) {
         txId = database.getTransactionManager().getNextTransactionId();
-
-        LogManager.instance().log(this, Level.FINE, "Creating buffer for TX %d (threadId=%d)", null, txId, Thread.currentThread().getId());
-
+        //LogManager.instance().log(this, Level.FINE, "Creating buffer for TX %d (threadId=%d)", txId, Thread.currentThread().getId());
         result = database.getTransactionManager().createTransactionBuffer(txId, pages);
       }
 
-      return new Pair<>(result, pages);
+      return new TransactionPhase1(result, pages);
 
     } catch (DuplicatedKeyException | ConcurrentModificationException e) {
       rollback();
@@ -494,7 +519,10 @@ public class TransactionContext implements Transaction {
     }
   }
 
-  public void commit2ndPhase(final Pair<Binary, List<MutablePage>> changes) {
+  public void commit2ndPhase(final TransactionContext.TransactionPhase1 changes) {
+    if (changes == null)
+      return;
+
     if (database.getMode() == PaginatedFile.MODE.READ_ONLY)
       throw new TransactionException("Cannot commit changes because the database is open in read-only mode");
 
@@ -506,13 +534,13 @@ public class TransactionContext implements Transaction {
     final PageManager pageManager = database.getPageManager();
 
     try {
-      if (changes.getFirst() != null)
+      if (changes.result != null)
         // WRITE TO THE WAL FIRST
-        database.getTransactionManager().writeTransactionToWAL(changes.getSecond(), walFlush, txId, changes.getFirst());
+        database.getTransactionManager().writeTransactionToWAL(changes.modifiedPages, walFlush, txId, changes.result);
 
       // AT THIS POINT, LOCK + VERSION CHECK, THERE IS NO NEED TO MANAGE ROLLBACK BECAUSE THERE CANNOT BE CONCURRENT TX THAT UPDATE THE SAME PAGE CONCURRENTLY
       // UPDATE PAGE COUNTER FIRST
-      LogManager.instance().log(this, Level.FINE, "TX committing pages newPages=%s modifiedPages=%s (threadId=%d)", null, newPages, modifiedPages,
+      LogManager.instance().log(this, Level.FINE, "TX committing pages newPages=%s modifiedPages=%s (threadId=%d)", newPages, modifiedPages,
           Thread.currentThread().getId());
 
       pageManager.updatePages(newPages, modifiedPages, asyncFlush);
@@ -545,8 +573,8 @@ public class TransactionContext implements Transaction {
     }
   }
 
-  public void addIndexOperation(final Index index, final boolean addOperation, final Object[] keys, final RID rid) {
-    indexChanges.addIndexKeyLock(index.getName(), addOperation, keys, rid);
+  public void addIndexOperation(final IndexInternal index, final boolean addOperation, final Object[] keys, final RID rid) {
+    indexChanges.addIndexKeyLock(index, addOperation, keys, rid);
   }
 
   @Override

@@ -1,37 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.network.binary;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.RID;
 import com.arcadedb.log.LogManager;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.net.Socket;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.logging.Level;
+import java.io.*;
+import java.net.*;
+import java.nio.*;
+import java.nio.charset.*;
+import java.util.*;
+import java.util.logging.*;
 
 /**
  * Abstract representation of a channel.
@@ -82,7 +80,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
     if (debug) {
       LogManager.instance().log(this, Level.INFO, "%s - Reading byte (1 byte)...", null, socket.getRemoteSocketAddress());
       final int value = in.readUnsignedByte();
-      LogManager.instance().log(this, Level.INFO, "%s - Read byte: %d", null, socket.getRemoteSocketAddress(), (int) value);
+      LogManager.instance().log(this, Level.INFO, "%s - Read byte: %d", null, socket.getRemoteSocketAddress(), value);
       return value;
     }
 
@@ -180,7 +178,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
 
       updateMetricReceivedBytes(Binary.INT_SERIALIZED_SIZE + len);
 
-      final String value = new String(tmp, "UTF-8");
+      final String value = new String(tmp, StandardCharsets.UTF_8);
       LogManager.instance().log(this, Level.INFO, "%s - Read string: %s", null, socket.getRemoteSocketAddress(), value);
       return value;
     }
@@ -194,7 +192,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
 
     updateMetricReceivedBytes(Binary.INT_SERIALIZED_SIZE + len);
 
-    return new String(tmp, "UTF-8");
+    return new String(tmp, StandardCharsets.UTF_8);
   }
 
   public void readBytes(final byte[] buffer) throws IOException {
@@ -227,7 +225,8 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
     in.readFully(tmp);
 
     if (debug)
-      LogManager.instance().log(this, Level.INFO, "%s - Read %d bytes: %s", null, socket.getRemoteSocketAddress(), len, new String(tmp));
+      LogManager.instance()
+          .log(this, Level.INFO, "%s - Read %d bytes: %s", null, socket.getRemoteSocketAddress(), len, new String(tmp, DatabaseFactory.getDefaultCharset()));
 
     return tmp;
   }
@@ -315,7 +314,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
       out.writeInt(-1);
       updateMetricTransmittedBytes(Binary.INT_SERIALIZED_SIZE);
     } else {
-      final byte[] buffer = iContent.getBytes("UTF-8");
+      final byte[] buffer = iContent.getBytes(StandardCharsets.UTF_8);
       out.writeInt(buffer.length);
       out.write(buffer, 0, buffer.length);
       updateMetricTransmittedBytes(Binary.INT_SERIALIZED_SIZE + buffer.length);
@@ -338,8 +337,8 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
       updateMetricTransmittedBytes(Binary.INT_SERIALIZED_SIZE);
     } else {
       if (iLength > maxChunkSize) {
-        throw new IOException("Impossible to write a chunk of length:" + iLength + " max allowed chunk length:" + maxChunkSize
-            + " see NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
+        throw new IOException("Impossible to write a chunk of " + iLength + " bytes. Max allowed chunk is " + maxChunkSize
+            + " bytes. See NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
       }
 
       out.writeInt(iLength);
@@ -350,15 +349,16 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
   }
 
   public ChannelBinary writeBytes(final byte[] content) throws IOException {
-    final int length = content.length;
-
-    if (debug)
-      LogManager.instance().log(this, Level.INFO, "%s - Writing bytes (%d bytes): %s", null, socket.getRemoteSocketAddress(), length, Arrays.toString(content));
-
     if (content != null) {
+      final int length = content.length;
+
+      if (debug)
+        LogManager.instance()
+            .log(this, Level.INFO, "%s - Writing bytes (%d bytes): %s", null, socket.getRemoteSocketAddress(), length, Arrays.toString(content));
+
       if (length > maxChunkSize) {
-        throw new IOException("Impossible to write a chunk of length:" + length + " max allowed chunk length:" + maxChunkSize
-            + " see NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
+        throw new IOException("Impossible to write a chunk of " + length + " bytes. Max allowed chunk is " + maxChunkSize
+            + " bytes. See NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
       }
 
       out.write(content, 0, length);
@@ -394,7 +394,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
     final String message = "Received unread response from " + socket.getRemoteSocketAddress()
         + " probably corrupted data from the network connection. Cleared dirty data in the buffer (" + i + " bytes): [" + dirtyBuffer + (
         i > dirtyBuffer.length() ? "..." : "") + "]";
-    LogManager.instance().log(this, Level.SEVERE, message, null);
+    LogManager.instance().log(this, Level.SEVERE, message);
     throw new IOException(message);
 
   }
@@ -414,7 +414,7 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
   }
 
   @Override
-  public void close() {
+  public synchronized void close() {
     if (debug)
       LogManager.instance()
           .log(this, Level.INFO, "%s - Closing socket...", null, socket != null ? " null possible previous close" : socket.getRemoteSocketAddress());
@@ -453,8 +453,8 @@ public abstract class ChannelBinary extends Channel implements ChannelDataInput,
       LogManager.instance().log(this, Level.INFO, "%s - Writing bytes (%d bytes) from DirectBuffer", null, socket.getRemoteSocketAddress(), length);
 
     if (length > maxChunkSize)
-      throw new IOException(
-          "Impossible to write a chunk of length:" + length + " max allowed chunk length:" + maxChunkSize + " see NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
+      throw new IOException("Impossible to write a chunk of " + length + " bytes max allowed chunk is " + maxChunkSize
+          + " bytes. See NETWORK_BINARY_MAX_CONTENT_LENGTH settings ");
 
     out.write(buffer.array(), buffer.arrayOffset(), length);
     updateMetricTransmittedBytes(length);

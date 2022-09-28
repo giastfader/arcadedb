@@ -1,40 +1,34 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.graph;
 
-import com.arcadedb.database.Binary;
 import com.arcadedb.database.Database;
 import com.arcadedb.database.ImmutableDocument;
 import com.arcadedb.database.RID;
 import com.arcadedb.schema.DocumentType;
-import com.arcadedb.serializer.BinaryTypes;
 import org.json.JSONObject;
 
-import java.util.Collections;
-import java.util.Map;
+import java.util.*;
 
 public class ImmutableLightEdge extends ImmutableDocument implements LightEdge {
-  private RID out;
-  private RID in;
+  private final RID out;
+  private final RID in;
 
   public ImmutableLightEdge(final Database graph, final DocumentType type, final RID edgeRID, final RID out, final RID in) {
     super(graph, type, edgeRID, null);
@@ -42,22 +36,12 @@ public class ImmutableLightEdge extends ImmutableDocument implements LightEdge {
     this.in = in;
   }
 
-  public ImmutableLightEdge(final Database graph, final DocumentType type, final Binary buffer) {
-    super(graph, type, null, buffer);
-    if (buffer != null) {
-      buffer.position(1); // SKIP RECORD TYPE
-      out = (RID) database.getSerializer().deserializeValue(graph, buffer, BinaryTypes.TYPE_COMPRESSED_RID, null);
-      in = (RID) database.getSerializer().deserializeValue(graph, buffer, BinaryTypes.TYPE_COMPRESSED_RID, null);
-      propertiesStartingPosition = buffer.position();
-    }
-  }
-
   @Override
-  public Object get(final String propertyName) {
+  public synchronized Object get(final String propertyName) {
     return null;
   }
 
-  public MutableEdge modify() {
+  public synchronized MutableEdge modify() {
     throw new IllegalStateException("Lightweight edges cannot be modified");
   }
 
@@ -95,6 +79,11 @@ public class ImmutableLightEdge extends ImmutableDocument implements LightEdge {
   }
 
   @Override
+  public synchronized Set<String> getPropertyNames() {
+    return Collections.EMPTY_SET;
+  }
+
+  @Override
   public byte getRecordType() {
     return Edge.RECORD_TYPE;
   }
@@ -105,17 +94,27 @@ public class ImmutableLightEdge extends ImmutableDocument implements LightEdge {
   }
 
   @Override
-  public Map<String, Object> toMap() {
+  public synchronized Map<String, Object> toMap() {
     return Collections.emptyMap();
   }
 
   @Override
-  public JSONObject toJSON() {
-    return new JSONObject();
+  public Edge asEdge() {
+    return this;
   }
 
   @Override
-  public String toString() {
+  public Edge asEdge(final boolean loadContent) {
+    return this;
+  }
+
+  @Override
+  public synchronized JSONObject toJSON() {
+    return new JSONObject().put("@cat", "e");
+  }
+
+  @Override
+  public synchronized String toString() {
     final StringBuilder buffer = new StringBuilder();
     buffer.append(out.toString());
     buffer.append("<->");

@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.console;
 
 import com.arcadedb.Constants;
@@ -27,8 +24,8 @@ import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.database.Document;
 import com.arcadedb.database.TransactionContext;
-import com.arcadedb.engine.DatabaseChecker;
 import com.arcadedb.engine.PaginatedFile;
+import com.arcadedb.exception.ArcadeDBException;
 import com.arcadedb.graph.Edge;
 import com.arcadedb.graph.Vertex;
 import com.arcadedb.query.sql.executor.MultiValue;
@@ -39,22 +36,24 @@ import com.arcadedb.remote.RemoteDatabase;
 import com.arcadedb.schema.DocumentType;
 import com.arcadedb.utility.RecordTableFormatter;
 import com.arcadedb.utility.TableFormatter;
-import org.jline.reader.*;
+import org.jline.reader.Completer;
+import org.jline.reader.EndOfFileException;
+import org.jline.reader.LineReader;
+import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.ParsedLine;
+import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.StringsCompleter;
 import org.jline.reader.impl.history.DefaultHistory;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.io.*;
+import java.util.*;
 
 public class Console {
-  private static final String           PROMPT               = "\n%s> ";
+  private static final String           PROMPT               = "%n%s> ";
+  private static final String           REMOTE_PREFIX        = "remote:";
+  private static final String           SQL_LANGUAGE         = "SQL";
   private final        boolean          system               = System.console() != null;
   private final        Terminal         terminal;
   private final        LineReader       lineReader;
@@ -65,14 +64,20 @@ public class Console {
   private              DatabaseInternal localDatabase;
   private              int              limit                = 20;
   private              int              maxMultiValueEntries = 10;
-  private              Boolean          expandResultset;
+  private              int              maxWidth             = TableFormatter.DEFAULT_MAX_WIDTH;
+  private              Boolean          expandResultSet;
   private              ResultSet        resultSet;
+  private              String           databaseDirectory;
+  private              int              verboseLevel         = 1;
 
-  private String getPrompt() {
-    return String.format(PROMPT, localDatabase != null ? "{" + localDatabase.getName() + "}" : "");
+  public Console(final DatabaseInternal database) throws IOException {
+    this(false);
+    this.localDatabase = database;
   }
 
   public Console(final boolean interactive) throws IOException {
+    setRootPath(".");
+
     GlobalConfiguration.PROFILE.setValue("low-cpu");
 
     terminal = TerminalBuilder.builder().system(system).streams(System.in, System.out).jansi(true).build();
@@ -82,7 +87,7 @@ public class Console {
     lineReader = LineReaderBuilder.builder().terminal(terminal).parser(parser).variable("history-file", ".history").history(new DefaultHistory())
         .completer(completer).build();
 
-    output("%s Console v.%s - %s (%s)\n", Constants.PRODUCT, Constants.getRawVersion(), Constants.COPYRIGHT, Constants.URL);
+    output("%s Console v.%s - %s (%s)", Constants.PRODUCT, Constants.getRawVersion(), Constants.COPYRIGHT, Constants.URL);
 
     if (!interactive)
       return;
@@ -92,22 +97,23 @@ public class Console {
     try {
       while (true) {
 
+        String line = null;
         try {
-          String line = lineReader.readLine(getPrompt());
+          line = lineReader.readLine(getPrompt());
           if (line == null)
             continue;
 
           lineReader.getHistory().save();
 
+        } catch (UserInterruptException | EndOfFileException e) {
+          return;
+        }
+
+        try {
           if (!parse(line, false))
             return;
-
-        } catch (UserInterruptException e) {
-          return;
-        } catch (EndOfFileException e) {
-          return;
         } catch (Exception e) {
-          terminal.writer().print("\nError: " + e.getMessage() + "\n");
+          // IGNORE (ALREADY PRINTED)
         }
       }
     } finally {
@@ -116,12 +122,16 @@ public class Console {
   }
 
   public static void main(String[] args) throws IOException {
-    new Console(true);
+    if (args.length > 0) {
+      final Console console = new Console(false);
+      console.parse(args[0], false);
+    } else
+      new Console(true);
   }
 
   public void close() {
     if (terminal != null)
-      terminal.writer().flush();
+      flushOutput();
 
     if (remoteDatabase != null) {
       remoteDatabase.close();
@@ -139,67 +149,68 @@ public class Console {
     }
   }
 
+  public Console setRootPath(final String rootDirectory) {
+    String root = rootDirectory;
+    if (root == null || root.isEmpty())
+      root = ".";
+    else if (root.endsWith(File.separator))
+      root = root.substring(0, root.length() - 1);
+
+    if (!new File(root + File.separator + "config").exists() && new File(
+        root + File.separator + ".." + File.separator + "config").exists()) {
+      databaseDirectory = new File(root).getAbsoluteFile().getParentFile().getPath() + File.separator + "databases" + File.separator;
+    } else
+      databaseDirectory = root + File.separator + "databases" + File.separator;
+
+    return this;
+  }
+
   public void setOutput(final ConsoleOutput output) {
     this.output = output;
   }
 
-  private boolean execute(final String line) throws IOException {
-    if (line != null && !line.isEmpty()) {
-      if (line.startsWith("begin"))
-        executeBegin();
-      else if (line.startsWith("check database"))
-        executeCheckDatabase();
-      else if (line.startsWith("close"))
-        executeClose();
-      else if (line.startsWith("commit"))
-        executeCommit();
-      else if (line.startsWith("connect"))
-        executeConnect(line);
-      else if (line.startsWith("create database"))
-        executeCreateDatabase(line);
-      else if (line.startsWith("drop database"))
-        executeDropDatabase(line);
-      else if (line.startsWith("export"))
-        executeExportDatabase(line);
-      else if (line.startsWith("import"))
-        executeImportDatabase(line);
-      else if (line.equalsIgnoreCase("help") || line.equals("?"))
-        executeHelp();
-      else if (line.startsWith("info"))
-        executeInfo(line.substring("info".length()).trim());
-      else if (line.startsWith("load"))
-        executeLoad(line.substring("load".length()).trim());
-      else if (line.equalsIgnoreCase("quit") || line.equalsIgnoreCase("exit")) {
-        executeClose();
-        return false;
-      } else if (line.startsWith("pwd"))
-        terminal.writer().print("Current directory: " + new File(".").getAbsolutePath());
-      else if (line.startsWith("rollback"))
-        executeRollback();
-      else if (line.startsWith("set"))
-        executeSet(line.substring("set".length()).trim());
-      else {
-        executeSQL(line);
+  private boolean execute(String line) throws IOException {
+    try {
+      if (line != null && !line.isEmpty()) {
+        line = line.trim();
+
+        if (line.startsWith("begin"))
+          executeBegin();
+        else if (line.startsWith("close"))
+          executeClose();
+        else if (line.startsWith("commit"))
+          executeCommit();
+        else if (line.startsWith("connect"))
+          executeConnect(line);
+        else if (line.startsWith("create database"))
+          executeCreateDatabase(line);
+        else if (line.startsWith("drop database"))
+          executeDropDatabase(line);
+        else if (line.equalsIgnoreCase("help") || line.equals("?"))
+          executeHelp();
+        else if (line.startsWith("info"))
+          executeInfo(line.substring("info".length()).trim());
+        else if (line.startsWith("load"))
+          executeLoad(line.substring("load".length()).trim());
+        else if (line.equalsIgnoreCase("quit") || line.equalsIgnoreCase("exit")) {
+          executeClose();
+          return false;
+        } else if (line.startsWith("pwd"))
+          outputLine("Current directory: " + new File(".").getAbsolutePath());
+        else if (line.startsWith("rollback"))
+          executeRollback();
+        else if (line.startsWith("set"))
+          executeSet(line.substring("set".length()).trim());
+        else {
+          executeSQL(line);
+        }
       }
+
+      return true;
+    } catch (IOException | RuntimeException e) {
+      outputError(e);
+      throw e;
     }
-
-    output("\n");
-
-    return true;
-  }
-
-  private void executeImportDatabase(final String line) throws IOException {
-    checkDatabaseIsOpen();
-    final String fileName = line.substring("import".length()).trim();
-
-    new DatabaseImporter().export(fileName, localDatabase, terminal.writer());
-  }
-
-  private void executeExportDatabase(final String line) throws IOException {
-    checkDatabaseIsOpen();
-    final String fileName = line.substring("export".length()).trim();
-
-    new DatabaseExporter().export(fileName, localDatabase, terminal.writer());
   }
 
   private void executeSet(final String line) {
@@ -207,19 +218,30 @@ public class Console {
       return;
 
     final String[] parts = line.split("=");
-    if (parts.length != 2)
+    if (parts.length != 2) {
+      outputLine("ERROR: invalid syntax for SET. Use SET <name> = <value>");
       return;
+    }
 
     final String key = parts[0].trim();
     final String value = parts[1].trim();
 
     if ("limit".equalsIgnoreCase(key)) {
       limit = Integer.parseInt(value);
-      output("Set new limit = %d", limit);
-    } else if ("expandResultset".equalsIgnoreCase(key)) {
-      expandResultset = value.equalsIgnoreCase("true");
-    } else if ("maxMultiValueEntries".equalsIgnoreCase(key))
+      outputLine("Set new limit to %d", limit);
+    } else if ("expandResultSet".equalsIgnoreCase(key)) {
+      expandResultSet = value.equalsIgnoreCase("true");
+      outputLine("Set expanded result set to %s", expandResultSet);
+    } else if ("maxMultiValueEntries".equalsIgnoreCase(key)) {
       maxMultiValueEntries = Integer.parseInt(value);
+      outputLine("Set maximum multi value entries to %d", maxMultiValueEntries);
+    } else if ("verbose".equalsIgnoreCase(key)) {
+      verboseLevel = Integer.parseInt(value);
+      outputLine("Set verbose level to %d", verboseLevel);
+    } else if ("maxWidth".equalsIgnoreCase(key)) {
+      maxWidth = Integer.parseInt(value);
+      outputLine("Set maximum width to %d", maxWidth);
+    }
   }
 
   private void executeTransactionStatus() {
@@ -232,7 +254,7 @@ public class Console {
       printRecord(row);
 
     } else
-      output("\nTransaction is not Active");
+      outputLine("Transaction is not Active");
   }
 
   private void executeBegin() {
@@ -240,7 +262,7 @@ public class Console {
     if (localDatabase != null)
       localDatabase.begin();
     else
-      remoteDatabase.command("SQL", "begin");
+      remoteDatabase.begin();
   }
 
   private void executeCommit() {
@@ -248,7 +270,7 @@ public class Console {
     if (localDatabase != null)
       localDatabase.commit();
     else
-      remoteDatabase.command("SQL", "commit");
+      remoteDatabase.commit();
   }
 
   private void executeRollback() {
@@ -256,7 +278,7 @@ public class Console {
     if (localDatabase != null)
       localDatabase.rollback();
     else
-      remoteDatabase.command("SQL", "rollback");
+      remoteDatabase.rollback();
   }
 
   private void executeClose() {
@@ -274,56 +296,52 @@ public class Console {
     }
   }
 
-  private void executeCheckDatabase() {
-    if (localDatabase == null)
-      throw new ConsoleException("Database is closed");
-
-    if (localDatabase.isTransactionActive())
-      localDatabase.commit();
-
-    new DatabaseChecker().check(localDatabase, 1);
-  }
-
   private void executeConnect(final String line) {
     final String url = line.substring("connect".length()).trim();
 
     final String[] urlParts = url.split(" ");
 
     if (localDatabase != null || remoteDatabase != null)
-      terminal.writer().print("Database already connected, to connect to a different database close the current one first\n");
+      outputLine("Database already connected, to connect to a different database close the current one first");
     else if (!urlParts[0].isEmpty()) {
-      if (urlParts[0].startsWith("remote:")) {
+      if (urlParts[0].startsWith(REMOTE_PREFIX)) {
         connectToRemoteServer(url);
 
-        terminal.writer().printf("\nConnected\n");
-        terminal.writer().flush();
+        outputLine("Connected");
+        flushOutput();
 
       } else {
         PaginatedFile.MODE mode = PaginatedFile.MODE.READ_WRITE;
         if (urlParts.length > 1)
           mode = PaginatedFile.MODE.valueOf(urlParts[1].toUpperCase());
 
-        databaseFactory = new DatabaseFactory(urlParts[0]);
-        localDatabase = (DatabaseInternal) databaseFactory.setAutoTransaction(true).open(mode);
+        final String databaseUrl = databaseDirectory + urlParts[0];
 
+        databaseFactory = new DatabaseFactory(databaseUrl);
+        localDatabase = (DatabaseInternal) databaseFactory.setAutoTransaction(true).open(mode);
       }
     } else
       throw new ConsoleException("URL missing");
   }
 
   private void executeCreateDatabase(final String line) {
-    final String url = line.substring("create database".length()).trim();
+    String url = line.substring("create database".length()).trim();
     if (localDatabase != null || remoteDatabase != null)
-      terminal.writer().print("Database already connected, to connect to a different database close the current one first\n");
+      outputLine("Database already connected, to connect to a different database close the current one first");
     else if (!url.isEmpty()) {
-      if (url.startsWith("remote:")) {
+      if (url.startsWith(REMOTE_PREFIX)) {
         connectToRemoteServer(url);
         remoteDatabase.create();
 
-        terminal.writer().printf("\nDatabase created\n");
-        terminal.writer().flush();
+        outputLine("Database created");
+        flushOutput();
 
       } else {
+        if (url.startsWith("file://"))
+          url = url.substring("file://".length());
+
+        url = databaseDirectory + url;
+
         databaseFactory = new DatabaseFactory(url);
         localDatabase = (DatabaseInternal) databaseFactory.setAutoTransaction(true).create();
       }
@@ -334,14 +352,14 @@ public class Console {
   private void executeDropDatabase(final String line) {
     final String url = line.substring("drop database".length()).trim();
     if (localDatabase != null || remoteDatabase != null)
-      terminal.writer().print("Database already connected, to connect to a different database close the current one first\n");
+      outputLine("Database already connected, to connect to a different database close the current one first");
     else if (!url.isEmpty()) {
-      if (url.startsWith("remote:")) {
+      if (url.startsWith(REMOTE_PREFIX)) {
         connectToRemoteServer(url);
         remoteDatabase.drop();
 
-        terminal.writer().printf("\nDatabase dropped\n");
-        terminal.writer().flush();
+        outputLine("Database dropped");
+        flushOutput();
 
       } else {
         databaseFactory = new DatabaseFactory(url);
@@ -362,11 +380,11 @@ public class Console {
     final Document rec = currentRecord.getElement().orElse(null);
 
     if (rec instanceof Vertex)
-      output("\nVERTEX @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
+      outputLine("VERTEX @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
     else if (rec instanceof Edge)
-      output("\nEDGE @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
+      outputLine("EDGE @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
     else if (rec != null)
-      output("\nDOCUMENT @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
+      outputLine("DOCUMENT @type:%s @rid:%s", rec.getTypeName(), rec.getIdentity());
 
     final List<TableFormatter.TableRow> resultSet = new ArrayList<>();
 
@@ -376,7 +394,7 @@ public class Console {
       if (value instanceof byte[])
         value = "byte[" + ((byte[]) value).length + "]";
       else if (value instanceof Iterator<?>) {
-        final List<Object> coll = new ArrayList<Object>();
+        final List<Object> coll = new ArrayList<>();
         while (((Iterator<?>) value).hasNext())
           coll.add(((Iterator<?>) value).next());
         value = coll;
@@ -391,15 +409,9 @@ public class Console {
       row.setProperty("VALUE", value);
     }
 
-    final TableFormatter formatter = new TableFormatter(new TableFormatter.TableOutput() {
-      @Override
-      public void onMessage(String text, Object... args) {
-        output(text, args);
-      }
-    });
+    final TableFormatter formatter = new TableFormatter(this::output);
+    formatter.setMaxWidthSize(maxWidth);
     formatter.writeRows(resultSet, -1);
-
-    output("\n");
   }
 
   private void executeSQL(final String line) {
@@ -408,13 +420,13 @@ public class Console {
     final long beginTime = System.currentTimeMillis();
 
     if (remoteDatabase != null)
-      resultSet = remoteDatabase.command("SQL", line);
+      resultSet = remoteDatabase.command(SQL_LANGUAGE, line);
     else
-      resultSet = localDatabase.command("SQL", line);
+      resultSet = localDatabase.command(SQL_LANGUAGE, line);
 
     final long elapsed;
 
-    Boolean expandOnThisQuery = expandResultset;
+    Boolean expandOnThisQuery = expandResultSet;
 
     Result first = null;
     if (resultSet.hasNext()) {
@@ -444,12 +456,8 @@ public class Console {
 
     } else {
       // TABLE FORMAT
-      final TableFormatter table = new TableFormatter(new TableFormatter.TableOutput() {
-        @Override
-        public void onMessage(String text, Object... args) {
-          output(text, args);
-        }
-      });
+      final TableFormatter table = new TableFormatter(this::output);
+      table.setMaxWidthSize(maxWidth);
       table.setPrefixedColumns("#", "@RID", "@TYPE");
 
       final List<RecordTableFormatter.TableRecordRow> list = new ArrayList<>();
@@ -470,22 +478,21 @@ public class Console {
       table.writeRows(list, limit);
     }
 
-    terminal.writer().printf("\nCommand executed in %dms\n", elapsed);
+    outputLine("Command executed in %dms", elapsed);
   }
 
   private void executeLoad(final String fileName) throws IOException {
     if (fileName.isEmpty())
-      throw new RuntimeException("File name is empty");
+      throw new ArcadeDBException("File name is empty");
 
     final File file = new File(fileName);
     if (!file.exists())
-      throw new RuntimeException("File name '" + fileName + "' not found");
+      throw new ArcadeDBException("File name '" + fileName + "' not found");
 
-    final FileReader fr = new FileReader(file);
-    BufferedReader bufferedReader = new BufferedReader(fr);
-
-    while (bufferedReader.ready())
-      parse(bufferedReader.readLine(), true);
+    try (final BufferedReader bufferedReader = new BufferedReader(new FileReader(file, DatabaseFactory.getDefaultCharset()))) {
+      while (bufferedReader.ready())
+        parse(bufferedReader.readLine(), true);
+    }
   }
 
   public boolean parse(final String line, final boolean printCommand) throws IOException {
@@ -493,7 +500,7 @@ public class Console {
 
     for (String w : parsed.words()) {
       if (printCommand)
-        terminal.writer().printf(getPrompt() + w);
+        output(getPrompt() + w);
 
       if (!execute(w))
         return false;
@@ -501,7 +508,14 @@ public class Console {
     return true;
   }
 
+  private void outputLine(final String text, final Object... args) {
+    output("\n" + text, args);
+  }
+
   private void output(final String text, final Object... args) {
+    if (verboseLevel < 1)
+      return;
+
     if (output != null)
       output.onOutput(String.format(text, args));
     else
@@ -515,14 +529,10 @@ public class Console {
     checkDatabaseIsOpen();
 
     if (subject.equalsIgnoreCase("types")) {
-      output("\nAVAILABLE TYPES");
+      outputLine("AVAILABLE TYPES");
 
-      final TableFormatter table = new TableFormatter(new TableFormatter.TableOutput() {
-        @Override
-        public void onMessage(String text, Object... args) {
-          output(text, args);
-        }
-      });
+      final TableFormatter table = new TableFormatter(this::output);
+      table.setMaxWidthSize(maxWidth);
 
       if (remoteDatabase != null) {
         executeSQL("select from schema:types");
@@ -542,7 +552,7 @@ public class Console {
         else if (kind == Edge.RECORD_TYPE)
           row.setField("TYPE", "Edge");
 
-        row.setField("PARENT TYPES", type.getParentTypes());
+        row.setField("SUPER TYPES", type.getSuperTypes());
         row.setField("BUCKETS", type.getBuckets(false));
         row.setField("PROPERTIES", type.getPropertyNames());
         row.setField("SYNC STRATEGY", type.getBucketSelectionStrategy());
@@ -558,28 +568,27 @@ public class Console {
   }
 
   private void executeHelp() {
-    output("\nHELP");
-    output("\nbegin                               -> begins a new transaction");
-    output("\ncheck database                      -> check database integrity");
-    output("\nclose                               -> closes the database");
-    output("\ncreate database <path>|remote:<url> -> creates a new database");
-    output("\ncommit                              -> commits current transaction");
-    output("\nconnect <path>|remote:<url>         -> connects to a database stored on <path>");
-    output("\nhelp|?                              -> ask for this help");
-    output("\ninfo types                          -> print available types");
-    output("\ninfo transaction                    -> print current transaction");
-    output("\nrollback                            -> rollbacks current transaction");
-    output("\nquit or exit                        -> exits from the console");
-    output("\n");
+    outputLine("HELP");
+    outputLine("begin                               -> begins a new transaction");
+    outputLine("check database                      -> check database integrity");
+    outputLine("close                               -> closes the database");
+    outputLine("create database <path>|remote:<url> -> creates a new database");
+    outputLine("commit                              -> commits current transaction");
+    outputLine("connect <path>|remote:<url>         -> connects to a database stored on <path>");
+    outputLine("help|?                              -> ask for this help");
+    outputLine("info types                          -> print available types");
+    outputLine("info transaction                    -> print current transaction");
+    outputLine("rollback                            -> rollbacks current transaction");
+    outputLine("quit or exit                        -> exits from the console");
   }
 
   private void checkDatabaseIsOpen() {
     if (localDatabase == null && remoteDatabase == null)
-      throw new RuntimeException("No active database. Open a database first\n");
+      throw new ArcadeDBException("No active database. Open a database first");
   }
 
   private void connectToRemoteServer(final String url) {
-    final String conn = url.substring("remote:".length());
+    final String conn = url.startsWith(REMOTE_PREFIX + "//") ? url.substring((REMOTE_PREFIX + "//").length()) : url.substring(REMOTE_PREFIX.length());
 
     final String[] serverUserPassword = conn.split(" ");
     if (serverUserPassword.length != 3)
@@ -602,5 +611,24 @@ public class Console {
     }
 
     remoteDatabase = new RemoteDatabase(remoteServer, remotePort, serverParts[1], serverUserPassword[1], serverUserPassword[2]);
+  }
+
+  private void flushOutput() {
+    terminal.writer().flush();
+  }
+
+  private void outputError(final Exception e) throws IOException {
+    if (verboseLevel > 1) {
+      try (ByteArrayOutputStream out = new ByteArrayOutputStream(); PrintWriter writer = new PrintWriter(out)) {
+        e.printStackTrace(writer);
+        writer.flush();
+        output("\nERROR:\n" + out + "\n");
+      }
+    } else
+      output("\nERROR: " + e.getMessage() + "\n");
+  }
+
+  private String getPrompt() {
+    return String.format(PROMPT, localDatabase != null ? "{" + localDatabase.getName() + "}" : "");
   }
 }

@@ -1,31 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Database;
 import com.arcadedb.exception.CommandExecutionException;
 import com.arcadedb.exception.TimeoutException;
-import com.arcadedb.schema.DocumentType;
 import com.arcadedb.query.sql.parser.Bucket;
+import com.arcadedb.schema.DocumentType;
 
 /**
  * <p> This step is used just as a gate check to verify that a bucket belongs to a class. </p> <p> It accepts two values: a target
@@ -39,7 +36,7 @@ public class CheckClusterTypeStep extends AbstractExecutionStep {
   Bucket bucket;
   String bucketName;
 
-  String targetClass;
+  final String targetClass;
 
   private long cost = 0;
 
@@ -109,11 +106,11 @@ public class CheckClusterTypeStep extends AbstractExecutionStep {
     result.append(spaces);
     result.append("+ CHECK TARGET CLUSTER FOR USERTYPE");
     if (profilingEnabled) {
-      result.append(" (" + getCostFormatted() + ")");
+      result.append(" (").append(getCostFormatted()).append(")");
     }
     result.append("\n");
     result.append(spaces);
-    result.append("  " + this.targetClass);
+    result.append("  ").append(this.targetClass);
     return result.toString();
   }
 

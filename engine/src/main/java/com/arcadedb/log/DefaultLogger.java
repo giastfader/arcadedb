@@ -1,34 +1,30 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.log;
 
 import com.arcadedb.utility.AnsiLogFormatter;
 import com.arcadedb.utility.SystemVariableResolver;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.Handler;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.concurrent.*;
+import java.util.logging.LogManager;
+import java.util.logging.*;
 
 /**
  * Default Logger implementation that writes to the Java Logging Framework.
@@ -38,7 +34,8 @@ public class DefaultLogger implements Logger {
   private static final String                                          DEFAULT_LOG                  = "com.arcadedb";
   private static final String                                          ENV_INSTALL_CUSTOM_FORMATTER = "arcadedb.installCustomFormatter";
   private static final DefaultLogger                                   instance                     = new DefaultLogger();
-  private final        ConcurrentMap<String, java.util.logging.Logger> loggersCache                 = new ConcurrentHashMap<String, java.util.logging.Logger>();
+  private static final String                                          FILE_LOG_PROPERTIES          = "arcadedb-log.properties";
+  private final        ConcurrentMap<String, java.util.logging.Logger> loggersCache                 = new ConcurrentHashMap<>();
 
   public DefaultLogger() {
     installCustomFormatter();
@@ -49,6 +46,26 @@ public class DefaultLogger implements Logger {
   }
 
   public void installCustomFormatter() {
+
+    InputStream stream = getClass().getClassLoader().getResourceAsStream(FILE_LOG_PROPERTIES);
+    if (stream == null) {
+      try {
+        stream = new FileInputStream(FILE_LOG_PROPERTIES);
+      } catch (FileNotFoundException e) {
+        // USE DEFAULT SETTINGS
+      }
+    }
+
+    if (stream != null)
+      try {
+        LogManager.getLogManager().readConfiguration(stream);
+      } catch (IOException e) {
+        // NOT FOUND, APPLY DEFAULTS
+        System.err.println("Cannot find ArcadeDB log file `arcadedb-log.properties`. Using default settings");
+      }
+    else
+      System.err.println("Cannot find ArcadeDB log file `arcadedb-log.properties`. Using default settings");
+
     final boolean installCustomFormatter = Boolean.parseBoolean(
         SystemVariableResolver.INSTANCE.resolveSystemVariables("${" + ENV_INSTALL_CUSTOM_FORMATTER + "}", "true"));
 
@@ -71,16 +88,17 @@ public class DefaultLogger implements Logger {
         }
       }
     } catch (Exception e) {
-      System.err.println("Error while installing custom formatter. Logging could be disabled. Cause: " + e.toString());
+      System.err.println("Error while installing custom formatter. Logging could be disabled. Cause: " + e);
     }
   }
 
-  public void log(final Object requester, final Level level, String message, final Throwable exception, final String context, final Object arg1,
-      final Object arg2, final Object arg3, final Object arg4, final Object arg5, final Object arg6, final Object arg7, final Object arg8, final Object arg9,
-      final Object arg10, final Object arg11, final Object arg12, final Object arg13, final Object arg14, final Object arg15, final Object arg16,
-      final Object arg17) {
+  public void log(final Object requester, Level level, String message, final Throwable exception, final String context, final Object arg1, final Object arg2,
+      final Object arg3, final Object arg4, final Object arg5, final Object arg6, final Object arg7, final Object arg8, final Object arg9, final Object arg10,
+      final Object arg11, final Object arg12, final Object arg13, final Object arg14, final Object arg15, final Object arg16, final Object arg17) {
     if (message == null)
       return;
+
+    //level = Level.SEVERE;
 
     final String requesterName;
     if (requester instanceof String)
@@ -118,7 +136,7 @@ public class DefaultLogger implements Logger {
         System.err.println(msg);
 
       } catch (Exception e) {
-        System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e.toString()));
+        System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e));
       } finally {
         if (level == Level.SEVERE)
           System.err.flush();
@@ -143,7 +161,7 @@ public class DefaultLogger implements Logger {
           flush();
 
       } catch (Exception e) {
-        System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e.toString()));
+        System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e));
         System.err.flush();
       }
     }
@@ -181,11 +199,11 @@ public class DefaultLogger implements Logger {
         try {
           String msg = message;
           if (args.length > 0)
-            String.format(message, args);
+            msg = String.format(message, args);
           System.err.println(msg);
 
         } catch (Exception e) {
-          System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e.toString()));
+          System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e));
         }
       } else if (log.isLoggable(level)) {
         // USE THE LOG
@@ -202,7 +220,7 @@ public class DefaultLogger implements Logger {
           else
             log.log(level, msg);
         } catch (Exception e) {
-          System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e.toString()));
+          System.err.print(String.format("Error on formatting message '%s'. Exception: %s", message, e));
         }
       }
     }

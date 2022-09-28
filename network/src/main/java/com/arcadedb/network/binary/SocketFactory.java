@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.network.binary;
 
@@ -27,30 +25,24 @@ import com.arcadedb.exception.ConfigurationException;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.net.*;
-import java.security.KeyStore;
+import java.security.*;
 
 public class SocketFactory {
 
   private javax.net.SocketFactory socketFactory;
   private boolean                 useSSL  = false;
   private SSLContext              context = null;
-  private ContextConfiguration    config;
 
-  private String keyStorePath;
-  private String keyStorePassword;
-  private String keyStoreType   = KeyStore.getDefaultType();
-  private String trustStorePath;
-  private String trustStorePassword;
-  private String trustStoreType = KeyStore.getDefaultType();
+  private final String keyStorePath;
+  private final String keyStorePassword;
+  private final String keyStoreType   = KeyStore.getDefaultType();
+  private final String trustStorePath;
+  private final String trustStorePassword;
+  private final String trustStoreType = KeyStore.getDefaultType();
 
   private SocketFactory(final ContextConfiguration iConfig) {
-    config = iConfig;
-
     useSSL = iConfig.getValueAsBoolean(GlobalConfiguration.NETWORK_USE_SSL);
     keyStorePath = (String) iConfig.getValue(GlobalConfiguration.NETWORK_SSL_KEYSTORE);
     keyStorePassword = (String) iConfig.getValue(GlobalConfiguration.NETWORK_SSL_KEYSTORE_PASSWORD);
@@ -90,26 +82,23 @@ public class SocketFactory {
           throw new ConfigurationException("Please provide a truststore password");
         }
 
-        SSLContext context = SSLContext.getInstance("TLS");
+        final SSLContext context = SSLContext.getInstance("TLS");
 
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        final KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
 
-        KeyStore keyStore = KeyStore.getInstance(keyStoreType);
-        char[] keyStorePass = keyStorePassword.toCharArray();
+        final KeyStore keyStore = KeyStore.getInstance(keyStoreType);
+        final char[] keyStorePass = keyStorePassword.toCharArray();
         keyStore.load(getAsStream(keyStorePath), keyStorePass);
 
         kmf.init(keyStore, keyStorePass);
 
-        TrustManagerFactory tmf = null;
-        if (trustStorePath != null) {
-          tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-          KeyStore trustStore = KeyStore.getInstance(trustStoreType);
-          char[] trustStorePass = trustStorePassword.toCharArray();
-          trustStore.load(getAsStream(trustStorePath), trustStorePass);
-          tmf.init(trustStore);
-        }
+        final TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        final KeyStore trustStore = KeyStore.getInstance(trustStoreType);
+        final char[] trustStorePass = trustStorePassword.toCharArray();
+        trustStore.load(getAsStream(trustStorePath), trustStorePass);
+        tmf.init(trustStore);
 
-        context.init(kmf.getKeyManagers(), (tmf == null ? null : tmf.getTrustManagers()), null);
+        context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 
         return context;
       } else {

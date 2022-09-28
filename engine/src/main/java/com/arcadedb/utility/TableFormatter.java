@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.utility;
 
@@ -25,14 +23,16 @@ import com.arcadedb.database.Identifiable;
 import com.arcadedb.database.Record;
 import com.arcadedb.serializer.BinaryComparator;
 
-import java.text.SimpleDateFormat;
+import java.text.*;
 import java.util.*;
-import java.util.Map.Entry;
+import java.util.Map.*;
 
 public class TableFormatter {
-
-  private static final String TYPE = "@TYPE";
-  private static final String RID  = "@RID";
+  public static final  int    DEFAULT_MAX_WIDTH = 150;
+  private static final String TYPE_COLUMN       = "@TYPE";
+  private static final String RID_COLUMN        = "@RID";
+  private static final String TYPE_PROPERTY     = "@type";
+  private static final String RID_PROPERTY      = "@rid";
 
   public enum ALIGNMENT {
     LEFT, CENTER, RIGHT
@@ -49,11 +49,12 @@ public class TableFormatter {
   protected final TableOutput                      out;
   protected       int                              maxMultiValueEntries = 10;
   protected       int                              minColumnSize        = 4;
-  protected       int                              maxWidthSize         = 180;
+  protected       int                              maxWidthSize         = DEFAULT_MAX_WIDTH;
   protected       String                           nullValue            = "";
   protected       boolean                          leftBorder           = true;
   protected       boolean                          rightBorder          = true;
   protected       TableRow                         footer;
+  protected       boolean                          lastResultShrunk     = false;
 
   public interface TableOutput {
     void onMessage(String text, Object... args);
@@ -115,9 +116,7 @@ public class TableFormatter {
     final Map<String, Integer> columns = parseColumns(rows, limit);
 
     if (columnSorting != null) {
-      Collections.sort(rows, new Comparator<Object>() {
-        @Override
-        public int compare(final Object o1, final Object o2) {
+      rows.sort((Comparator<Object>) (o1, o2) -> {
           final Document doc1 = (Document) ((Identifiable) o1).getRecord();
           final Document doc2 = (Document) ((Identifiable) o2).getRecord();
           final Object value1 = doc1.get(columnSorting.getFirst());
@@ -126,16 +125,15 @@ public class TableFormatter {
 
           final int result;
           if (value2 == null)
-            result = 1;
+              result = 1;
           else if (value1 == null)
-            result = 0;
+              result = 0;
           else if (value1 instanceof Comparable)
-            result = BinaryComparator.compareTo(value1, value2);
+              result = BinaryComparator.compareTo(value1, value2);
           else
-            result = BinaryComparator.compareTo(value1.toString(), value2.toString());
+              result = BinaryComparator.compareTo(value1.toString(), value2.toString());
 
           return ascending ? result : result * -1;
-        }
       });
     }
 
@@ -145,13 +143,22 @@ public class TableFormatter {
 
       if (limit > -1 && fetched >= limit) {
         printHeaderLine(columns);
-        out.onMessage("\nLIMIT EXCEEDED: resultset contains more items not displayed (limit=" + limit + ")");
+
+        if (lastResultShrunk)
+          out.onMessage("\nNOTE: the result set did not fit the screen (" + maxWidthSize
+              + " columns). Please consider changing max width (example: set maxwidth = 200) or reduce the selected fields");
+
+        out.onMessage("\nLIMIT EXCEEDED: result set contains more items not displayed (limit=" + limit + ")");
         return;
       }
     }
 
     if (fetched > 0)
       printHeaderLine(columns);
+
+    if (lastResultShrunk)
+      out.onMessage("\nNOTE: the result set did not fit the screen (" + maxWidthSize
+          + " columns). Please consider changing max width (example: set maxwidth = 200) or reduce the selected fields");
 
     if (footer != null) {
       dumpRecordInTable(-1, footer, columns);
@@ -179,6 +186,10 @@ public class TableFormatter {
   public TableFormatter setMaxWidthSize(final int maxWidthSize) {
     this.maxWidthSize = maxWidthSize;
     return this;
+  }
+
+  public boolean isLastResultShrunk() {
+    return lastResultShrunk;
   }
 
   public int getMaxMultiValueEntries() {
@@ -233,7 +244,7 @@ public class TableFormatter {
       if (rightBorder)
         format.append('|');
 
-      out.onMessage("\n" + format.toString(), vargs.toArray());
+      out.onMessage("\n" + format, vargs.toArray());
 
     } catch (Exception t) {
       out.onMessage("%3d|%9s|%s\n", iIndex, iRecord, "Error on loading record due to: " + t);
@@ -349,7 +360,9 @@ public class TableFormatter {
         value = ((Record) value).getIdentity().toString();
       }
     } else if (value instanceof Date) {
-      value = DEF_DATEFORMAT.format((Date) value);
+      synchronized (DEF_DATEFORMAT) {
+        value = DEF_DATEFORMAT.format((Date) value);
+      }
     } else if (value instanceof byte[])
       value = "byte[" + ((byte[]) value).length + "]";
 
@@ -362,11 +375,8 @@ public class TableFormatter {
 
     // INIT METADATA
     final LinkedHashSet<String> allMetadataNames = new LinkedHashSet<String>();
-    final Set<String> metadataColumns = new HashSet<String>();
 
     for (Entry<String, Map<String, String>> entry : columnMetadata.entrySet()) {
-      metadataColumns.add(entry.getKey());
-
       for (Entry<String, String> entry2 : entry.getValue().entrySet()) {
         allMetadataNames.add(entry2.getKey());
 
@@ -481,7 +491,7 @@ public class TableFormatter {
    * @return
    */
   private Map<String, Integer> parseColumns(final List<? extends TableRow> rows, final int limit) {
-    final Map<String, Integer> columns = new LinkedHashMap<String, Integer>();
+    final Map<String, Integer> columns = new LinkedHashMap<>();
 
     for (String c : prefixedColumns)
       columns.put(c, minColumnSize);
@@ -496,13 +506,16 @@ public class TableFormatter {
 
       // PARSE ALL THE DOCUMENT'S FIELDS
       for (String fieldName : row.getFields()) {
+        if (fieldName.equals(RID_PROPERTY) || fieldName.equals(TYPE_PROPERTY))
+          continue;
+
         columns.put(fieldName, getColumnSize(fetched, row, fieldName, columns.get(fieldName)));
       }
 
-      if (!hasClass && row.getField("@TYPE") != null)
+      if (!hasClass && row.getField(TYPE_PROPERTY) != null)
         hasClass = true;
 
-      if (!tempRids && row.getField("@RID") == null)
+      if (!tempRids && row.getField(RID_PROPERTY) == null)
         tempRids = true;
 
       if (limit > -1 && fetched++ >= limit)
@@ -510,10 +523,10 @@ public class TableFormatter {
     }
 
     if (tempRids)
-      columns.remove("@RID");
+      columns.remove(RID_COLUMN);
 
     if (!hasClass)
-      columns.remove("@TYPE");
+      columns.remove(TYPE_COLUMN);
 
     if (footer != null) {
       // PARSE ALL THE DOCUMENT'S FIELDS
@@ -527,15 +540,13 @@ public class TableFormatter {
     for (Entry<String, Integer> col : columns.entrySet())
       width += col.getValue();
 
+    lastResultShrunk = false;
     if (width > maxWidthSize) {
       // SCALE COLUMNS AUTOMATICALLY
-      final List<Entry<String, Integer>> orderedColumns = new ArrayList<Entry<String, Integer>>();
-      orderedColumns.addAll(columns.entrySet());
-      Collections.sort(orderedColumns, new Comparator<Entry<String, Integer>>() {
-        public int compare(Entry<String, Integer> o1, Entry<String, Integer> o2) {
-          return o1.getValue().compareTo(o2.getValue());
-        }
-      });
+      final List<Entry<String, Integer>> orderedColumns = new ArrayList<Entry<String, Integer>>(columns.entrySet());
+      orderedColumns.sort((o1, o2) -> o1.getValue().compareTo(o2.getValue()));
+
+      lastResultShrunk = true;
 
       // START CUTTING THE BIGGEST ONES
       Collections.reverse(orderedColumns);
@@ -571,9 +582,9 @@ public class TableFormatter {
     }
 
     if (tempRids)
-      columns.remove(RID);
+      columns.remove(RID_COLUMN);
     if (!hasClass)
-      columns.remove(TYPE);
+      columns.remove(TYPE_COLUMN);
 
     for (String c : columnHidden)
       columns.remove(c);
@@ -582,7 +593,7 @@ public class TableFormatter {
   }
 
   private Integer getColumnSize(final Integer iIndex, final TableRow row, final String fieldName, final Integer origSize) {
-    Integer newColumnSize;
+    int newColumnSize;
     if (origSize == null)
       // START FROM THE FIELD NAME SIZE
       newColumnSize = fieldName.length();
@@ -625,17 +636,17 @@ public class TableFormatter {
     while (true) {
       int pos = fieldValueAsString.indexOf("$ANSI{", lastPos);
       if (pos < 0) {
-        formattedString.append(fieldValueAsString.substring(lastPos, fieldValueAsString.length()));
+        formattedString.append(fieldValueAsString.substring(lastPos));
         break;
       }
 
-      formattedString.append(fieldValueAsString.substring(lastPos, pos));
+      formattedString.append(fieldValueAsString, lastPos, pos);
 
       final int sepPos = fieldValueAsString.indexOf(" ", pos);
 
       final int closePos = fieldValueAsString.indexOf("}", sepPos);
 
-      formattedString.append(fieldValueAsString.substring(sepPos + 1, closePos));
+      formattedString.append(fieldValueAsString, sepPos + 1, closePos);
 
       lastPos = closePos + 1;
     }

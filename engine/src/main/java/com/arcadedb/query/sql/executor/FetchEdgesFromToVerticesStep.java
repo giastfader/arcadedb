@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Identifiable;
@@ -47,10 +44,9 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
   Iterator       fromIter;
   //iterator of edges on current from
   Iterator<Edge> currentFromEdgesIter;
-  Iterator       toIterator;
 
-  Set<RID> toList = new HashSet<>();
-  private boolean inited = false;
+  final   Set<RID> toList = new HashSet<>();
+  private boolean  inited = false;
 
   private Edge nextEdge = null;
 
@@ -84,6 +80,7 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
         fetchNextEdge();
         ResultInternal result = new ResultInternal();
         result.setElement(edge);
+        currentBatch++;
         return result;
       }
 
@@ -96,7 +93,7 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
 
       @Override
       public Optional<ExecutionPlan> getExecutionPlan() {
-        return null;
+        return Optional.empty();
       }
 
       @Override
@@ -106,66 +103,60 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
     };
   }
 
-  private Vertex asVertex(Object currentFrom) {
-    if (currentFrom instanceof RID) {
-      currentFrom = ((RID) currentFrom).getRecord();
-    }
-    if (currentFrom instanceof Result) {
-      return ((Result) currentFrom).getVertex().orElse(null);
-    }
-    if (currentFrom instanceof Vertex) {
-      return (Vertex) currentFrom;
-    }
-    return null;
-  }
+//  private Vertex asVertex(Object currentFrom) {
+//    if (currentFrom instanceof RID) {
+//      currentFrom = ((RID) currentFrom).getRecord();
+//    }
+//    if (currentFrom instanceof Result) {
+//      return ((Result) currentFrom).getVertex().orElse(null);
+//    }
+//    if (currentFrom instanceof Vertex) {
+//      return (Vertex) currentFrom;
+//    }
+//    return null;
+//  }
 
   private void init() {
     synchronized (this) {
-      if (this.inited) {
+      if (this.inited)
         return;
-      }
       inited = true;
     }
 
-    Object fromValues = null;
+    Object fromValues;
 
     fromValues = ctx.getVariable(fromAlias);
-    if (fromValues instanceof Iterable && !(fromValues instanceof Identifiable)) {
+    if (fromValues instanceof Iterable && !(fromValues instanceof Identifiable))
       fromValues = ((Iterable) fromValues).iterator();
-    } else if (!(fromValues instanceof Iterator)) {
+    else if (!(fromValues instanceof Iterator))
       fromValues = Collections.singleton(fromValues).iterator();
-    }
 
-    Object toValues = null;
+    Object toValues;
 
     toValues = ctx.getVariable(toAlias);
-    if (toValues instanceof Iterable && !(toValues instanceof Identifiable)) {
+    if (toValues instanceof Iterable && !(toValues instanceof Identifiable))
       toValues = ((Iterable) toValues).iterator();
-    } else if (!(toValues instanceof Iterator)) {
+    else if (!(toValues instanceof Iterator))
       toValues = Collections.singleton(toValues).iterator();
-    }
 
     fromIter = (Iterator) fromValues;
 
-    Iterator toIter = (Iterator) toValues;
+    final Iterator toIter = (Iterator) toValues;
 
     while (toIter != null && toIter.hasNext()) {
       Object elem = toIter.next();
-      if (elem instanceof Result) {
+      if (elem instanceof Result)
         elem = ((Result) elem).toElement();
-      }
-      if (elem instanceof Identifiable && !(elem instanceof Record)) {
-        elem = ((Identifiable) elem).getRecord();
-      }
-      if (!(elem instanceof Record)) {
-        throw new CommandExecutionException("Invalid vertex: " + elem);
-      }
-      if (elem instanceof Vertex) {
-        toList.add(((Vertex) elem).getIdentity());
-      }
-    }
 
-    toIterator = toList.iterator();
+      if (elem instanceof Identifiable && !(elem instanceof Record))
+        elem = ((Identifiable) elem).getRecord();
+
+      if (!(elem instanceof Record))
+        throw new CommandExecutionException("Invalid vertex: " + elem);
+
+      if (elem instanceof Vertex)
+        toList.add(((Vertex) elem).getIdentity());
+    }
 
     fetchNextEdge();
   }
@@ -196,8 +187,8 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
           return;
         }
       }
-      Edge edge = this.currentFromEdgesIter.next();
-      if (toList == null || toList.contains(edge.getIn().getIdentity())) {
+      final Edge edge = this.currentFromEdgesIter.next();
+      if (toList.contains(edge.getIn().getIdentity())) {
         if (matchesClass(edge) && matchesCluster(edge)) {
           this.nextEdge = edge;
           return;
@@ -206,39 +197,39 @@ public class FetchEdgesFromToVerticesStep extends AbstractExecutionStep {
     }
   }
 
-  private boolean matchesCluster(Edge edge) {
-    if (targetCluster == null) {
+  private boolean matchesCluster(final Edge edge) {
+    if (targetCluster == null)
       return true;
-    }
-    int bucketId = edge.getIdentity().getBucketId();
-    String bucketName = ctx.getDatabase().getSchema().getBucketById(bucketId).getName();
+
+    final int bucketId = edge.getIdentity().getBucketId();
+    final String bucketName = ctx.getDatabase().getSchema().getBucketById(bucketId).getName();
     return bucketName.equals(targetCluster.getStringValue());
   }
 
   private boolean matchesClass(Edge edge) {
-    if (targetClass == null) {
+    if (targetClass == null)
       return true;
-    }
+
     return edge.getTypeName().equals(targetClass.getStringValue());
   }
 
   @Override
-  public String prettyPrint(int depth, int indent) {
-    String spaces = ExecutionStepInternal.getIndent(depth, indent);
+  public String prettyPrint(final int depth, final int indent) {
+    final String spaces = ExecutionStepInternal.getIndent(depth, indent);
     String result = spaces + "+ FOR EACH x in " + fromAlias + "\n";
     result += spaces + "    FOR EACH y in " + toAlias + "\n";
     result += spaces + "       FETCH EDGES FROM x TO y";
-    if (targetClass != null) {
+    if (targetClass != null)
       result += "\n" + spaces + "       (target class " + targetClass + ")";
-    }
-    if (targetCluster != null) {
+
+    if (targetCluster != null)
       result += "\n" + spaces + "       (target bucket " + targetCluster + ")";
-    }
+
     return result;
   }
 
   @Override
-  public ExecutionStep copy(CommandContext ctx) {
+  public ExecutionStep copy(final CommandContext ctx) {
     return new FetchEdgesFromToVerticesStep(fromAlias, toAlias, targetClass, targetCluster, ctx, profilingEnabled);
   }
 }

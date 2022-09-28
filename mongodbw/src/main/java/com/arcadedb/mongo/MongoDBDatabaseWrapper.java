@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.mongo;
 
 import com.arcadedb.database.Database;
@@ -31,7 +28,11 @@ import com.arcadedb.schema.DocumentType;
 import de.bwaldvogel.mongo.MongoBackend;
 import de.bwaldvogel.mongo.MongoCollection;
 import de.bwaldvogel.mongo.MongoDatabase;
-import de.bwaldvogel.mongo.backend.*;
+import de.bwaldvogel.mongo.backend.CollectionOptions;
+import de.bwaldvogel.mongo.backend.Cursor;
+import de.bwaldvogel.mongo.backend.CursorRegistry;
+import de.bwaldvogel.mongo.backend.QueryResult;
+import de.bwaldvogel.mongo.backend.Utils;
 import de.bwaldvogel.mongo.backend.aggregation.Aggregation;
 import de.bwaldvogel.mongo.bson.Document;
 import de.bwaldvogel.mongo.exception.MongoServerError;
@@ -45,12 +46,9 @@ import io.netty.channel.Channel;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 import static de.bwaldvogel.mongo.backend.Utils.markOkay;
 
@@ -125,8 +123,7 @@ public class MongoDBDatabaseWrapper implements MongoDatabase {
         final Document doc = super.next().getProperty("value");
 
         final Map<String, Object> values = new HashMap<>(doc.size());
-        for (Map.Entry<String, Object> entry : doc.entrySet())
-          values.put(entry.getKey(), entry.getValue());
+          values.putAll(doc);
 
         return new ResultInternal(values);
       }
@@ -372,12 +369,8 @@ public class MongoDBDatabaseWrapper implements MongoDatabase {
       // EMBEDDED CALL WITHOUT THE SERVER
       return;
 
-    List<Document> results = this.lastResults.get(channel);
-    if (results == null) {
-      results = new ArrayList<>(10);
-      this.lastResults.put(channel, results);
-    }
-    results.add(null);
+      List<Document> results = this.lastResults.computeIfAbsent(channel, k -> new ArrayList<>(10));
+      results.add(null);
   }
 
   private synchronized void putLastResult(final Channel channel, final Document result) {

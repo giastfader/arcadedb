@@ -1,4 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+    SPDX-License-Identifier: Apache-2.0
+-->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -7,35 +25,63 @@
     <groupId>com.arcadedb</groupId>
     <artifactId>arcadedb-parent</artifactId>
     <packaging>pom</packaging>
-    <version>21.9.1-SNAPSHOT</version>
+    <version>22.8.1-SNAPSHOT</version>
 
     <name>ArcadeDB</name>
     <url>https://arcadedata.com/</url>
     <description>ArcadeDB</description>
 
+    <inceptionYear>2021</inceptionYear>
+
+    <organization>
+        <name>Arcade Data Ltd</name>
+        <url>https://arcadedata.com/</url>
+    </organization>
+
+    <licenses>
+        <license>
+            <name>Apache 2</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+
     <properties>
-        <!--maven.compiler.release>8</maven.compiler.release-->
+        <exclude.tests></exclude.tests>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <junit.jupiter.version>5.7.2</junit.jupiter.version>
-
         <docker.plugin.version>1.2.2</docker.plugin.version>
-        <maven-compiler-plugin.version>3.8.1</maven-compiler-plugin.version>
-        <jacoco-maven-plugin.version>0.8.6</jacoco-maven-plugin.version>
-        <maven-surefire-plugin.version>3.0.0-M5</maven-surefire-plugin.version>
-        <maven-failsafe-plugin.version>3.0.0-M5</maven-failsafe-plugin.version>
-        <maven-assembly-plugin.version>3.3.0</maven-assembly-plugin.version>
-        <maven-javadoc-plugin.version>3.3.0</maven-javadoc-plugin.version>
+        <dockerfile-maven-version>1.4.13</dockerfile-maven-version>
+        <maven-compiler-plugin.version>3.10.1</maven-compiler-plugin.version>
+        <jacoco-maven-plugin.version>0.8.8</jacoco-maven-plugin.version>
+        <maven-surefire-plugin.version>3.0.0-M7</maven-surefire-plugin.version>
+        <maven-failsafe-plugin.version>3.0.0-M7</maven-failsafe-plugin.version>
+        <maven-assembly-plugin.version>3.4.2</maven-assembly-plugin.version>
+        <maven-resources-plugin.version>3.3.0</maven-resources-plugin.version>
+        <maven-javadoc-plugin.version>3.4.1</maven-javadoc-plugin.version>
         <maven-source-plugin.version>3.2.1</maven-source-plugin.version>
-        <assertj-core.version>3.20.2</assertj-core.version>
+        <maven-gpg-plugin.version>3.0.1</maven-gpg-plugin.version>
+        <maven-versions-plugin.version>2.12.0</maven-versions-plugin.version>
+        <maven-jar-plugin.version>3.3.0</maven-jar-plugin.version>
+        <maven-shade-plugin.version>3.4.0</maven-shade-plugin.version>
+        <maven-deploy-plugin.version>3.0.0</maven-deploy-plugin.version>
+        <nexus-staging-maven-plugin.version>1.6.13</nexus-staging-maven-plugin.version>
+        <maven-assembly-plugin.version>3.3.0</maven-assembly-plugin.version>
+
+        <assertj-core.version>3.23.1</assertj-core.version>
+        <junit.jupiter.version>5.9.1</junit.jupiter.version>
+
         <skipIntegration>true</skipIntegration>
+
+        <itCoverageAgent></itCoverageAgent>
+        <license-maven-plugin.version>4.1</license-maven-plugin.version>
+        <mockito-core.version>4.8.0</mockito-core.version>
     </properties>
 
     <developers>
         <developer>
             <id>lgarulli</id>
             <name>Luca Garulli</name>
-            <email>l.garullii@arcadedata.com</email>
+            <email>l.garulli@arcadedata.com</email>
             <timezone>-7</timezone>
         </developer>
         <developer>
@@ -62,6 +108,22 @@
         </repository>
     </distributionManagement>
 
+    <modules>
+        <module>engine</module>
+        <module>network</module>
+        <module>server</module>
+        <module>integration</module>
+        <module>console</module>
+        <module>gremlin</module>
+        <module>graphql</module>
+        <module>mongodbw</module>
+        <module>redisw</module>
+        <module>postgresw</module>
+        <module>coverage</module>
+        <module>package</module>
+        <module>e2e</module>
+    </modules>
+
     <build>
         <resources>
             <resource>
@@ -77,41 +139,15 @@
                 <configuration>
                     <source>11</source>
                     <target>11</target>
-                    <compilerArgs>
-                        <arg>--add-modules</arg>
-                        <arg>jdk.hotspot.agent</arg>
-                        <arg>--add-exports</arg>
-                        <arg>jdk.hotspot.agent/sun.jvm.hotspot.tools=ALL-UNNAMED</arg>
-                    </compilerArgs>
+                    <!--                    <compilerArgs>-->
+                    <!--                        <arg>&#45;&#45;add-modules</arg>-->
+                    <!--                        <arg>jdk.hotspot.agent</arg>-->
+                    <!--                        <arg>&#45;&#45;add-exports</arg>-->
+                    <!--                        <arg>jdk.hotspot.agent/sun.jvm.hotspot.tools=ALL-UNNAMED</arg>-->
+                    <!--                        <arg>-proc:none</arg>-->
+                    <!--                    </compilerArgs>-->
                 </configuration>
             </plugin>
-
-            <!--            <plugin>-->
-            <!--                <groupId>org.jacoco</groupId>-->
-            <!--                <artifactId>jacoco-maven-plugin</artifactId>-->
-            <!--                <version>${jacoco-maven-plugin.version}</version>-->
-            <!--                <configuration>-->
-            <!--                    <excludes>-->
-            <!--                        <exclude>**/Q*.java</exclude>-->
-            <!--                        <exclude>**/static/**</exclude>-->
-            <!--                    </excludes>-->
-            <!--                </configuration>-->
-            <!--                <executions>-->
-            <!--                    <execution>-->
-            <!--                        <goals>-->
-            <!--                            <goal>prepare-agent</goal>-->
-            <!--                        </goals>-->
-            <!--                    </execution>-->
-            <!--                    <execution>-->
-            <!--                        <id>report</id>-->
-            <!--                        <phase>prepare-package</phase>-->
-            <!--                        <goals>-->
-            <!--                            <goal>report</goal>-->
-            <!--                        </goals>-->
-            <!--                    </execution>-->
-            <!--                </executions>-->
-            <!--            </plugin>-->
-
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
@@ -125,41 +161,85 @@
                     </execution>
                 </executions>
             </plugin>
-
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
+                    <forkCount>1</forkCount>
+                    <systemPropertyVariables>
+                        <org.slf4j.simpleLogger.defaultLogLevel>warn</org.slf4j.simpleLogger.defaultLogLevel>
+                        <org.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener>warn
+                        </org.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${maven-failsafe-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <excludes>
+                        <exclude>**/*HASplitBrainIT.java</exclude>
+                        <exclude>**/*HTTP2ServersIT.java</exclude>
+                        <exclude>**/ArcadeGraphProcessDebugTest.java</exclude>
+                        <exclude>**/ArcadeGraphStructureDebugTest.java</exclude>
+                        <exclude>${exclude.tests}</exclude>
+                    </excludes>
+                    <skipITs>${skipIntegration}</skipITs>
+                    <argLine>${itCoverageAgent}</argLine>
+                    <reuseForks>true</reuseForks>
+                    <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
+                    <forkCount>1</forkCount>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>${maven-deploy-plugin.version}</version>
+                <configuration>
+                    <deployAtEnd>true</deployAtEnd>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.mycila</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <version>${license-maven-plugin.version}</version>
+                <configuration>
+                    <properties>
+                        <year>${project.inceptionYear}-present</year>
+                        <owner>${project.organization.name}</owner>
+                        <email>info@arcadedata.com</email>
+                    </properties>
+                    <useDefaultExcludes>true</useDefaultExcludes>
+                    <licenseSets>
+                        <licenseSet>
+                            <header>com/mycila/maven/plugin/license/templates/APACHE-2.txt</header>
+                            <excludes>
+                                <exclude>**/README</exclude>
+                                <exclude>**/Jenkinsfile</exclude>
+                                <exclude>**/*.yml</exclude>
+                                <exclude>**/*.yaml</exclude>
+                                <exclude>**/*.txt</exclude>
+                                <exclude>src/test/resources/**</exclude>
+                                <exclude>src/main/resources/**</exclude>
+                            </excludes>
+                        </licenseSet>
+                    </licenseSets>
+                </configuration>
+            </plugin>
         </plugins>
+
         <pluginManagement>
             <plugins>
-                <plugin>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <version>${maven-surefire-plugin.version}</version>
-                    <configuration>
-                        <forkedProcessExitTimeoutInSeconds>60</forkedProcessExitTimeoutInSeconds>
-                        <forkCount>1</forkCount>
-                        <includes>
-                            <include>**/Test*.java</include>
-                            <include>**/*Test.java</include>
-                            <include>**/*Tests.java</include>
-                            <include>**/*TestCase.java</include>
-                        </includes>
-                        <properties>
-                            <!-- <includeTags>fast</includeTags> -->
-                            <excludeTags>slow</excludeTags>
-                            <!--
-                            <configurationParameters>
-                                junit.jupiter.conditions.deactivate = *
-                            </configurationParameters>
-                            -->
-                        </properties>
-                    </configuration>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId>
-                    <artifactId>maven-failsafe-plugin</artifactId>
-                    <version>${maven-failsafe-plugin.version}</version>
-                    <configuration>
-                        <skipITs>${skipIntegration}</skipITs>
-                    </configuration>
-                </plugin>
                 <plugin>
                     <artifactId>maven-assembly-plugin</artifactId>
                     <version>${maven-assembly-plugin.version}</version>
@@ -191,21 +271,25 @@
                     <version>${docker.plugin.version}</version>
                 </plugin>
 
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>${maven-jar-plugin.version}</version>
+                    <configuration>
+                        <skipIfEmpty>true</skipIfEmpty>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <goals>
+                                <goal>test-jar</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>
-    <modules>
-        <module>engine</module>
-        <module>gremlin</module>
-        <module>network</module>
-        <module>importer</module>
-        <module>console</module>
-        <module>server</module>
-        <module>mongodbw</module>
-        <module>redisw</module>
-        <module>postgresw</module>
-        <module>package</module>
-    </modules>
+
     <dependencies>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -219,11 +303,17 @@
             <version>${assertj-core.version}</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito-core.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <profiles>
         <profile>
-            <id>release</id>
+            <id>deploy</id>
             <build>
                 <plugins>
                     <plugin>
@@ -246,9 +336,155 @@
             </build>
         </profile>
         <profile>
+            <id>deploy-central</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <version>${maven-gpg-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>versions-maven-plugin</artifactId>
+                        <version>${maven-versions-plugin.version}</version>
+                        <configuration>
+                            <generateBackupPoms>false</generateBackupPoms>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.plugins</groupId>
+                        <artifactId>nexus-staging-maven-plugin</artifactId>
+                        <version>${nexus-staging-maven-plugin.version}</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <serverId>ossrh</serverId>
+                            <nexusUrl>https://s01.oss.sonatype.org</nexusUrl>
+                            <autoReleaseAfterClose>false</autoReleaseAfterClose>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>deploy-to-sonatype</id>
+                                <phase>deploy</phase>
+                                <goals>
+                                    <goal>deploy</goal>
+                                    <goal>release</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>coverage</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jacoco</groupId>
+                        <artifactId>jacoco-maven-plugin</artifactId>
+                        <version>${jacoco-maven-plugin.version}</version>
+                        <configuration>
+                            <excludes>
+                                <exclude>com/arcadedb/graphql/parser/**/*</exclude>
+                                <exclude>**/SqlParserTokenManager.*</exclude>
+                                <exclude>**/static/*</exclude>
+                                <exclude>**/*.bat</exclude>
+                                <exclude>**/*.sh</exclude>
+                                <exclude>**/*.md</exclude>
+                                <exclude>**/*.yml</exclude>
+                                <exclude>**/*.yaml</exclude>
+                                <exclude>LICENCE</exclude>
+                                <exclude>Jenkinsfile</exclude>
+                            </excludes>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>prepare-unit</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>**/SqlParserTokenManager.class</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                            <!-- prepare agent before integration tests -->
+                            <execution>
+                                <id>prepare-it</id>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                                <phase>pre-integration-test</phase>
+                                <configuration>
+                                    <propertyName>itCoverageAgent</propertyName>
+                                    <excludes>
+                                        <exclude>**/SqlParserTokenManager.class</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>report</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>report</goal>
+                                </goals>
+                                <configuration>
+                                    <excludes>
+                                        <exclude>**/SqlParserTokenManager.class</exclude>
+                                    </excludes>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+        <profile>
+            <id>full</id>
+            <properties>
+                <skipIntegration>false</skipIntegration>
+            </properties>
+        </profile>
+        <profile>
             <id>integration</id>
             <properties>
                 <skipIntegration>false</skipIntegration>
+                <exclude.tests>
+                    com/arcadedb/server/ha/HASplitBrainIT.java,
+                    com/arcadedb/server/ha/ReplicationServerLeaderChanges3TimesIT.java,
+                    com/arcadedb/server/ha/ReplicationServerLeaderDownIT.java,
+                    com/arcadedb/server/ha/HARandomCrashIT.java,
+                    com/arcadedb/server/ha/ReplicationServerQuorumMajority2ServersOutIT.java
+                </exclude.tests>
+            </properties>
+        </profile>
+        <profile>
+            <id>windows</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                </os>
+            </activation>
+            <properties>
+                <exclude.tests>**/gremlin/**/*.java</exclude.tests>
             </properties>
         </profile>
 

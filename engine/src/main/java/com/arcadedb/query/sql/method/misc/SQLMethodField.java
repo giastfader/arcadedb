@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.query.sql.method.misc;
 
@@ -28,32 +26,35 @@ import com.arcadedb.query.sql.executor.CommandContext;
  * @author Johann Sorel (Geomatys)
  * @author Luca Garulli (l.garulli--(at)--gmail.com)
  */
-public class SQLMethodField extends OAbstractSQLMethod {
+public class SQLMethodField extends AbstractSQLMethod {
 
-  public static final String NAME = "field";
+    public static final String NAME = "field";
 
-  public SQLMethodField() {
-    super(NAME, 1, 1);
-  }
-
-  @Override
-  public Object execute( Object iThis, final Identifiable iCurrentRecord, final CommandContext iContext, Object ioResult,
-      final Object[] iParams) {
-    if (iParams[0] == null)
-      return null;
-
-    final String paramAsString = iParams[0].toString();
-
-    if (ioResult instanceof Identifiable) {
-      final Document doc = (Document) ((Identifiable) ioResult).getRecord();
-      return doc.get(paramAsString);
+    public SQLMethodField() {
+        super(NAME, 1, 1);
     }
 
-    return null;
-  }
+    @Override
+    public Object execute(final Object iThis,
+                          final Identifiable iCurrentRecord,
+                          final CommandContext iContext,
+                          final Object ioResult,
+                          final Object[] iParams) {
+        if (iParams[0] == null)
+            return null;
 
-  @Override
-  public boolean evaluateParameters() {
-    return false;
-  }
+        final String field = iParams[0].toString();
+
+        if (ioResult instanceof Identifiable) {
+            final Document doc = (Document) ((Identifiable) ioResult).getRecord();
+            return doc.get(field);
+        }
+
+        return null;
+    }
+
+    @Override
+    public boolean evaluateParameters() {
+        return false;
+    }
 }

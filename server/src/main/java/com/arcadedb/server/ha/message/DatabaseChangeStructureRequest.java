@@ -1,38 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.server.ha.message;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.engine.PaginatedFile;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.schema.EmbeddedSchema;
 import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.ha.HAServer;
 import com.arcadedb.server.ha.ReplicationException;
-import com.arcadedb.utility.FileUtils;
+import org.json.JSONObject;
 
-import java.io.File;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.logging.*;
 
 public class DatabaseChangeStructureRequest extends HAAbstractCommand {
   private String               databaseName;
@@ -118,25 +115,10 @@ public class DatabaseChangeStructureRequest extends HAAbstractCommand {
     try {
       final DatabaseInternal db = (DatabaseInternal) server.getServer().getDatabase(databaseName);
 
-      final String databasePath = db.getDatabasePath();
-
-      // ADD FILES
-      for (Map.Entry<Integer, String> entry : filesToAdd.entrySet()) {
-        db.getFileManager().getOrCreateFile(entry.getKey(), databasePath + "/" + entry.getValue());
-      }
-
-      // REMOVE FILES
-      for (Map.Entry<Integer, String> entry : filesToRemove.entrySet()) {
-        db.getFileManager().dropFile(entry.getKey());
-      }
-
-      // REPLACE SCHEMA FILE
-      final File file = new File(db.getDatabasePath() + "/" + EmbeddedSchema.SCHEMA_FILE_NAME);
-      FileUtils.writeContentToStream(file, schemaJson.getBytes());
+      updateFiles(db);
 
       // RELOAD SCHEMA
-      db.getSchema().getEmbedded().loadChanges();
-
+      db.getSchema().getEmbedded().load(PaginatedFile.MODE.READ_WRITE, true);
       return new DatabaseChangeStructureResponse();
 
     } catch (Exception e) {
@@ -145,8 +127,27 @@ public class DatabaseChangeStructureRequest extends HAAbstractCommand {
     }
   }
 
+  public void updateFiles(final DatabaseInternal db) throws IOException {
+    final String databasePath = db.getDatabasePath();
+
+    // ADD FILES
+    for (Map.Entry<Integer, String> entry : filesToAdd.entrySet())
+      db.getFileManager().getOrCreateFile(entry.getKey(), databasePath + File.separator + entry.getValue());
+
+    // REMOVE FILES
+    for (Map.Entry<Integer, String> entry : filesToRemove.entrySet()) {
+      db.getPageManager().deleteFile(entry.getKey());
+      db.getFileManager().dropFile(entry.getKey());
+      db.getSchema().getEmbedded().removeFile(entry.getKey());
+    }
+
+    if (!schemaJson.isEmpty())
+      // REPLACE SCHEMA FILE
+      db.getSchema().getEmbedded().update(new JSONObject(schemaJson));
+  }
+
   @Override
   public String toString() {
-    return "dbchangestructure add=" + filesToAdd + " remote=" + filesToRemove;
+    return "dbchangestructure add=" + filesToAdd + " remove=" + filesToRemove;
   }
 }

@@ -1,27 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.server.ha.message;
 
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.Document;
+import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
-import com.arcadedb.database.*;
 import com.arcadedb.graph.Edge;
 import com.arcadedb.graph.VertexInternal;
 import com.arcadedb.query.sql.executor.IteratorResultSet;
@@ -33,8 +34,7 @@ import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.ha.HAServer;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class CommandForwardResponse extends HAAbstractCommand {
   private ResultSet        resultset;
@@ -104,7 +104,7 @@ public class CommandForwardResponse extends HAAbstractCommand {
         buffer.flip();
 
         final DocumentType t = database.getSchema().getTypeByBucketId(rid.getBucketId());
-        final Record record = database.getRecordFactory().newImmutableRecord(database, t != null ? t : null, rid, buffer.copy(), null);
+        final Record record = database.getRecordFactory().newImmutableRecord(database, t, rid, buffer.copy(), null);
         list.add(new ResultInternal(record));
       }
     }

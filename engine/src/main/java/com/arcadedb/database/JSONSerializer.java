@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.graph.MutableVertex;
@@ -29,7 +26,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 public class JSONSerializer {
   private final Database database;
@@ -40,15 +37,15 @@ public class JSONSerializer {
 
   public JSONObject map2json(final Map<String, Object> map) {
     final JSONObject json = new JSONObject();
-    for (String k : map.keySet()) {
-      final Object value = convertToJSONType(map.get(k));
+    for (Map.Entry<String, Object> entry : map.entrySet()) {
+      final Object value = convertToJSONType(entry.getValue());
 
       if (value instanceof Number && !Float.isFinite(((Number) value).floatValue())) {
-        LogManager.instance().log(this, Level.SEVERE, "Found non finite number in map with key '%s', ignore this entry in the conversion", null, k);
+        LogManager.instance().log(this, Level.SEVERE, "Found non finite number in map with key '%s', ignore this entry in the conversion", entry.getKey());
         continue;
       }
 
-      json.put(k, value);
+      json.put(entry.getKey(), value);
     }
 
     return json;
@@ -66,9 +63,7 @@ public class JSONSerializer {
 
   private Object convertToJSONType(Object value) {
     if (value instanceof Document) {
-      final JSONObject json = ((Document) value).toJSON();
-      json.put("@type", ((Document) value).getTypeName());
-      value = json;
+      value = ((Document) value).toJSON();
     } else if (value instanceof Collection) {
       final Collection c = (Collection) value;
       final JSONArray array = new JSONArray();
@@ -77,8 +72,13 @@ public class JSONSerializer {
       value = array;
     } else if (value instanceof Date)
       value = ((Date) value).getTime();
-    else if (value instanceof Map)
-      value = new JSONObject((Map) value);
+    else if (value instanceof Map) {
+      final Map<String, Object> m = (Map<String, Object>) value;
+      final JSONObject map = new JSONObject();
+      for (Map.Entry<String, Object> entry : m.entrySet())
+        map.put(entry.getKey(), convertToJSONType(entry.getValue()));
+      value = map;
+    }
 
     return value;
   }

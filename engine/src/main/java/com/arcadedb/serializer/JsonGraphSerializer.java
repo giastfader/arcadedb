@@ -1,60 +1,71 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.serializer;
 
 import com.arcadedb.database.Document;
+import com.arcadedb.database.RID;
 import com.arcadedb.graph.Edge;
 import com.arcadedb.graph.Vertex;
-import com.arcadedb.query.sql.executor.Result;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import java.util.*;
 
-public class JsonGraphSerializer {
+public class JsonGraphSerializer extends JsonSerializer {
 
-  private boolean expandVertexEdges = false;
+  private boolean    expandVertexEdges = false;
+  private JSONObject sharedJson        = null;
 
-  public JSONObject serializeRecord(final Document document) {
-    final JSONObject object = new JSONObject();
+  public JSONObject serializeGraphElement(final Document document) {
+    if (sharedJson != null)
+      return serializeGraphElement(document, sharedJson);
+    return serializeGraphElement(document, new JSONObject());
+  }
 
-    object.put("r", document.getIdentity().toString());
-    object.put("t", document.getTypeName());
+  public JSONObject serializeGraphElement(final Document document, final JSONObject object) {
+    final JSONObject properties;
 
-    final JSONObject properties = new JSONObject();
+    if (object.has("p")) {
+      // REUSE PROPERTY OBJECT
+      properties = object.getJSONObject("p");
+      properties.clear();
+    } else
+      properties = new JSONObject();
+
+    object.clear();
     object.put("p", properties);
+
+    final RID rid = document.getIdentity();
+    if (rid != null)
+      object.put("r", rid.toString());
+    object.put("t", document.getTypeName());
 
     for (String p : document.getPropertyNames()) {
       Object value = document.get(p);
 
       if (value instanceof Document)
-        value = serializeRecord((Document) value);
+        value = serializeGraphElement((Document) value, new JSONObject());
       else if (value instanceof Collection) {
         final List<Object> list = new ArrayList<>();
         for (Object o : (Collection) value) {
           if (o instanceof Document)
-            o = serializeRecord((Document) o);
+            o = serializeGraphElement((Document) o, new JSONObject());
           list.add(o);
         }
         value = list;
@@ -63,43 +74,6 @@ public class JsonGraphSerializer {
     }
 
     setMetadata(document, object);
-
-    return object;
-  }
-
-  public JSONObject serializeResult(final Result record) {
-    final JSONObject object = new JSONObject();
-
-    if (record.isElement()) {
-      final Document document = record.toElement();
-      object.put("r", document.getIdentity().toString());
-      object.put("t", document.getTypeName());
-      setMetadata(document, object);
-    }
-
-    final JSONObject properties = new JSONObject();
-    object.put("p", properties);
-
-    for (String p : record.getPropertyNames()) {
-      Object value = record.getProperty(p);
-
-      if (value instanceof Document)
-        value = serializeRecord((Document) value);
-      else if (value instanceof Result)
-        value = serializeResult((Result) value);
-      else if (value instanceof Collection) {
-        final List<Object> list = new ArrayList<>();
-        for (Object o : (Collection) value) {
-          if (o instanceof Document)
-            o = serializeRecord((Document) o);
-          else if (o instanceof Result)
-            o = serializeResult((Result) o);
-          list.add(o);
-        }
-        value = list;
-      }
-      properties.put(p, value);
-    }
 
     return object;
   }
@@ -137,5 +111,10 @@ public class JsonGraphSerializer {
       object.put("i", edge.getIn());
       object.put("o", edge.getOut());
     }
+  }
+
+  public JsonGraphSerializer setSharedJson(final JSONObject json) {
+    sharedJson = json;
+    return this;
   }
 }

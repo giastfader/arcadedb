@@ -1,44 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.utility;
 
 import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.log.LogManager;
 
 import java.io.*;
-import java.lang.management.ManagementFactory;
-import java.lang.management.ThreadInfo;
-import java.lang.management.ThreadMXBean;
-import java.math.BigInteger;
-import java.nio.channels.FileChannel;
+import java.lang.management.*;
+import java.nio.channels.*;
 import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.util.Locale;
-import java.util.logging.Level;
-import java.util.zip.GZIPOutputStream;
+import java.nio.file.*;
+import java.util.*;
+import java.util.logging.*;
+import java.util.zip.*;
 
 public class FileUtils {
   public static final int    KILOBYTE = 1024;
@@ -161,50 +152,45 @@ public class FileUtils {
     return iSize + "b";
   }
 
-  public static String getDirectory(String iPath) {
-    iPath = getPath(iPath);
-    int pos = iPath.lastIndexOf("/");
-    if (pos == -1)
-      return "";
-
-    return iPath.substring(0, pos);
-  }
-
-  public static void createDirectoryTree(final String iFileName) {
-    final String[] fileDirectories = iFileName.split("/");
-    for (int i = 0; i < fileDirectories.length - 1; ++i)
-      new File(fileDirectories[i]).mkdir();
-  }
-
-  public static String getPath(final String iPath) {
-    if (iPath == null)
-      return null;
-    return iPath.replace('\\', '/');
-  }
-
   public static void checkValidName(final String iFileName) throws IOException {
-    if (iFileName.contains("..") || iFileName.contains("/") || iFileName.contains("\\"))
+    if (iFileName.contains("..") || iFileName.contains(File.separator))
       throw new IOException("Invalid file name '" + iFileName + "'");
   }
 
   public static void deleteRecursively(final File rootFile) {
-    if (rootFile.exists()) {
-      if (rootFile.isDirectory()) {
-        final File[] files = rootFile.listFiles();
-        if (files != null) {
-          for (File f : files) {
-            if (f.isFile()) {
-              if (!f.delete()) {
-                throw new IllegalStateException(String.format("Can not delete file %s", f));
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (rootFile.exists()) {
+          if (rootFile.isDirectory()) {
+            final File[] files = rootFile.listFiles();
+            if (files != null) {
+              for (File f : files) {
+                if (f.isFile()) {
+                  Files.delete(Paths.get(f.getAbsolutePath()));
+                } else
+                  deleteRecursively(f);
               }
-            } else
-              deleteRecursively(f);
+            }
           }
-        }
-      }
 
-      if (!rootFile.delete()) {
-        throw new IllegalStateException(String.format("Can not delete file %s", rootFile));
+          Files.delete(Paths.get(rootFile.getAbsolutePath()));
+        }
+
+        break;
+
+      } catch (IOException e) {
+//        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+//          // AVOID LOCKING UNDER WINDOWS
+//          try {
+//            LogManager.instance()
+//                .log(rootFile, Level.WARNING, "Cannot delete directory '%s'. Forcing GC cleanup and try again (attempt=%d)", e, rootFile, attempt);
+//            System.gc();
+//            Thread.sleep(1000);
+//          } catch (Exception ex) {
+//            // IGNORE IT
+//          }
+//        } else
+        LogManager.instance().log(rootFile, Level.WARNING, "Cannot delete directory '%s'", e, rootFile);
       }
     }
   }
@@ -215,9 +201,34 @@ public class FileUtils {
     }
   }
 
+  public static boolean deleteFile(final File file) {
+    for (int attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (file.exists())
+          Files.delete(file.toPath());
+        return true;
+      } catch (IOException e) {
+//        if (System.getProperty("os.name").toLowerCase().contains("win")) {
+//          // AVOID LOCKING UNDER WINDOWS
+//          try {
+//            LogManager.instance().log(file, Level.WARNING, "Cannot delete file '%s'. Forcing GC cleanup and try again (attempt=%d)", e, file, attempt);
+//            System.gc();
+//            Thread.sleep(1000);
+//          } catch (Exception ex) {
+//            // IGNORE IT
+//          }
+//        } else
+        LogManager.instance().log(file, Level.WARNING, "Cannot delete file '%s'", e, file);
+      }
+    }
+    return false;
+  }
+
   @SuppressWarnings("resource")
   public static final void copyFile(final File source, final File destination) throws IOException {
-    try (FileChannel sourceChannel = new FileInputStream(source).getChannel(); FileChannel targetChannel = new FileOutputStream(destination).getChannel()) {
+    try (FileInputStream fis = new FileInputStream(source); FileOutputStream fos = new FileOutputStream(destination)) {
+      final FileChannel sourceChannel = fis.getChannel();
+      final FileChannel targetChannel = fos.getChannel();
       sourceChannel.transferTo(0, sourceChannel.size(), targetChannel);
     }
   }
@@ -227,7 +238,7 @@ public class FileUtils {
       destination.mkdirs();
 
     for (File f : source.listFiles()) {
-      final File target = new File(destination.getAbsolutePath() + "/" + f.getName());
+      final File target = new File(destination.getAbsolutePath() + File.separator + f.getName());
       if (f.isFile())
         copyFile(f, target);
       else
@@ -269,23 +280,6 @@ public class FileUtils {
     return dump.toString();
   }
 
-  public boolean deleteFile(final File file) {
-    if (!file.exists())
-      return true;
-
-    try {
-      final FileSystem fileSystem = FileSystems.getDefault();
-      final Path path = fileSystem.getPath(file.getAbsolutePath());
-
-      Files.delete(path);
-
-      return true;
-    } catch (IOException e) {
-      e.printStackTrace();
-    }
-    return false;
-  }
-
   public static String readFileAsString(final File file, final String iCharset) throws IOException {
     try (FileInputStream is = new FileInputStream(file)) {
       return readStreamAsString(is, iCharset, 0);
@@ -309,9 +303,8 @@ public class FileUtils {
   }
 
   public static String readStreamAsString(final InputStream iStream, final String iCharset, final long limit) throws IOException {
-    final StringBuffer fileData = new StringBuffer(1000);
-    final BufferedReader reader = new BufferedReader(new InputStreamReader(iStream, iCharset));
-    try {
+    final StringBuilder fileData = new StringBuilder(1000);
+    try (final BufferedReader reader = new BufferedReader(new InputStreamReader(iStream, iCharset))) {
       final char[] buf = new char[1024];
       int numRead;
 
@@ -324,7 +317,7 @@ public class FileUtils {
 
         if (limit > 0 && fileData.length() + readData.length() > limit) {
           // LIMIT REACHED
-          fileData.append(readData.substring(0, (int) (limit - fileData.length())));
+          fileData.append(readData, 0, (int) (limit - fileData.length()));
           break;
         } else
           fileData.append(readData);
@@ -333,8 +326,6 @@ public class FileUtils {
           // LIMIT REACHED
           break;
       }
-    } finally {
-      reader.close();
     }
     return fileData.toString();
   }
@@ -352,7 +343,12 @@ public class FileUtils {
   }
 
   public static void writeContentToStream(final OutputStream output, final String iContent) throws IOException {
-    final OutputStreamWriter os = new OutputStreamWriter(output);
+    try (final OutputStreamWriter os = new OutputStreamWriter(output, DatabaseFactory.getDefaultCharset())) {
+      writeContentToStream(os, iContent);
+    }
+  }
+
+  public static void writeContentToStream(final OutputStreamWriter os, final String iContent) throws IOException {
     final BufferedWriter writer = new BufferedWriter(os);
     writer.write(iContent);
     writer.flush();
@@ -370,41 +366,12 @@ public class FileUtils {
   public static void gzipFile(final File sourceFile, final File destFile) throws IOException {
     try (FileInputStream fis = new FileInputStream(sourceFile);
         FileOutputStream fos = new FileOutputStream(destFile);
-        GZIPOutputStream gzipOS = new GZIPOutputStream(fos);) {
+        GZIPOutputStream gzipOS = new GZIPOutputStream(fos)) {
       byte[] buffer = new byte[1024 * 1024];
       int len;
       while ((len = fis.read(buffer)) != -1) {
         gzipOS.write(buffer, 0, len);
       }
-    }
-  }
-
-  public static String getFileChecksum(final File file) throws IOException, NoSuchAlgorithmException {
-    final MessageDigest digest = MessageDigest.getInstance("MD5");
-    //Get file input stream for reading the file content
-    try (FileInputStream fis = new FileInputStream(file)) {
-
-      //Create byte array to read data in chunks
-      byte[] byteArray = new byte[1024];
-      int bytesCount = 0;
-
-      //Read file data and update in message digest
-      while ((bytesCount = fis.read(byteArray)) != -1) {
-        digest.update(byteArray, 0, bytesCount);
-      }
-
-      //Get the hash's bytes
-      byte[] bytes = digest.digest();
-
-      //This bytes[] has bytes in decimal format;
-      //Convert it to hexadecimal format
-      StringBuilder sb = new StringBuilder();
-      for (int i = 0; i < bytes.length; i++) {
-        sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
-      }
-
-      //return complete hash
-      return sb.toString();
     }
   }
 
@@ -421,5 +388,74 @@ public class FileUtils {
       }
     }
     return out.toString();
+  }
+
+  public static String printWithLineNumbers(final String text) {
+    // COUNT TOTAL LINES FIRST
+    int totalLines = 1;
+    int maxWidth = 0;
+    int currWidth = 0;
+    for (int i = 0; i < text.length(); i++) {
+      final char current = text.charAt(i);
+      if (current == '\n') {
+        ++totalLines;
+
+        if (currWidth > maxWidth)
+          maxWidth = currWidth;
+
+        currWidth = 0;
+      } else
+        ++currWidth;
+    }
+
+    if (currWidth > maxWidth)
+      maxWidth = currWidth;
+
+    final int maxLineDigits = String.valueOf(totalLines).length();
+
+    final StringBuilder result = new StringBuilder();
+
+    // PRINT /10
+    for (int i = 0; i < maxLineDigits + 1; i++)
+      result.append(" ");
+
+    for (int i = 0; i < maxWidth; i++) {
+      String s = "" + i;
+      final char unit = s.charAt(s.length() - 1);
+      if (unit == '0') {
+        final char decimal = s.length() > 1 ? s.charAt(s.length() - 2) : ' ';
+        result.append(decimal);
+      } else
+        result.append(' ');
+    }
+    result.append("\n");
+
+    // PRINT UNITS
+    for (int i = 0; i < maxLineDigits + 1; i++)
+      result.append(" ");
+
+    for (int i = 0; i < maxWidth; i++) {
+      String s = "" + i;
+      final char unit = s.charAt(s.length() - 1);
+      result.append(unit);
+    }
+
+    result.append(String.format("\n%-" + maxLineDigits + "d: ", 1));
+    int line = 1;
+    for (int i = 0; i < text.length(); i++) {
+      final char current = text.charAt(i);
+      final Character next = i + 1 < text.length() ? text.charAt(i) : null;
+      if (current == '\n') {
+        ++line;
+        result.append(String.format("\n%-" + maxLineDigits + "d: ", line));
+      } else if (current == '\r' && (next == null || next == '\n')) {
+        ++line;
+        result.append(String.format("\n%-" + maxLineDigits + "d: ", line));
+        ++i;
+      } else
+        result.append(current);
+    }
+
+    return result.toString();
   }
 }

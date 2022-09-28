@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.apache.tinkerpop.gremlin.arcadedb.structure;
 
 import org.apache.tinkerpop.gremlin.structure.Graph;
@@ -53,13 +50,13 @@ public class ArcadeGraphFeatures implements Graph.Features {
     return StringFactory.featureString(this);
   }
 
-  public class ArcadeGraphGraphFeatures implements GraphFeatures {
+  public static class ArcadeGraphGraphFeatures implements GraphFeatures {
 
-    private VariableFeatures variableFeatures = new ArcadeVariableFeatures();
+    private final VariableFeatures variableFeatures = new ArcadeVariableFeatures();
 
     @Override
     public boolean supportsConcurrentAccess() {
-      return false;
+      return true;
     }
 
     @Override
@@ -79,7 +76,12 @@ public class ArcadeGraphFeatures implements Graph.Features {
 
   }
 
-  public class ArcadeElementFeatures implements ElementFeatures {
+  public static class ArcadeElementFeatures implements ElementFeatures {
+    @Override
+    public boolean supportsNullPropertyValues() {
+      return false;
+    }
+
     @Override
     public boolean supportsNumericIds() {
       return false;
@@ -112,11 +114,15 @@ public class ArcadeGraphFeatures implements Graph.Features {
 
     @Override
     public boolean supportsStringIds() {
-      return false;
+      return true;
     }
   }
 
   public class ArcadeVertexFeatures extends ArcadeElementFeatures implements VertexFeatures {
+    @Override
+    public boolean supportsNullPropertyValues() {
+      return false;
+    }
 
     @Override
     public VertexPropertyFeatures properties() {
@@ -141,12 +147,21 @@ public class ArcadeGraphFeatures implements Graph.Features {
 
   public class ArcadeEdgeFeatures extends ArcadeElementFeatures implements EdgeFeatures {
     @Override
+    public boolean supportsNullPropertyValues() {
+      return false;
+    }
+
+    @Override
     public EdgePropertyFeatures properties() {
       return edgePropertyFeatures;
     }
   }
 
-  public class ArcadeVertexPropertyFeatures extends ArcadeDataTypeFeatures implements VertexPropertyFeatures {
+  public static class ArcadeVertexPropertyFeatures extends ArcadeDataTypeFeatures implements VertexPropertyFeatures {
+    @Override
+    public boolean supportsNullPropertyValues() {
+      return false;
+    }
 
     @Override
     public boolean supportsAnyIds() {
@@ -179,7 +194,7 @@ public class ArcadeGraphFeatures implements Graph.Features {
     }
   }
 
-  public class ArcadeEdgePropertyFeatures extends ArcadeDataTypeFeatures implements EdgePropertyFeatures {
+  public static class ArcadeEdgePropertyFeatures extends ArcadeDataTypeFeatures implements EdgePropertyFeatures {
   }
 
   public static class ArcadeDataTypeFeatures implements DataTypeFeatures {

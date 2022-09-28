@@ -1,60 +1,55 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.exception.DatabaseMetadataException;
 import com.arcadedb.exception.SchemaException;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.schema.DocumentType;
 
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 /**
  * HEADER = [itemCount(int:4),pageSize(int:4)] CONTENT-PAGES = [propertyName(string)]
  * <br>
  */
 public class Dictionary extends PaginatedComponent {
-  public static final  String               DICT_EXT               = "dict";
-  public static final  int                  DEF_PAGE_SIZE          = 65536 * 5;
-  private static final int                  DICTIONARY_ITEM_COUNT  = 0;
-  private static final int                  DICTIONARY_HEADER_SIZE = Binary.INT_SERIALIZED_SIZE;
-  private              int                  itemCount;
-  private              List<String>         dictionary             = new CopyOnWriteArrayList<>();
-  private              Map<String, Integer> dictionaryMap          = new ConcurrentHashMap<>();
+  public static final  String                         DICT_EXT               = "dict";
+  public static final  int                            DEF_PAGE_SIZE          = 65536 * 5;
+  private static final int                            CURRENT_VERSION        = 0;
+  private              List<String>                   dictionary             = new CopyOnWriteArrayList<>();
+  private              ConcurrentMap<String, Integer> dictionaryMap          = new ConcurrentHashMap<>(1024);
+  // THIS IS LEGACY BECAUSE THE NUMBER OF ITEMS WAS STORED IN THE HEADER. NOW THE DICTIONARY IS POPULATED FROM THE ACTUAL CONTENT IN THE PAGES
+  private static final int                            DICTIONARY_HEADER_SIZE = Binary.INT_SERIALIZED_SIZE;
 
   public static class PaginatedComponentFactoryHandler implements PaginatedComponentFactory.PaginatedComponentFactoryHandler {
     @Override
-    public PaginatedComponent createOnLoad(DatabaseInternal database, String name, String filePath, final int fileId, PaginatedFile.MODE mode, int pageSize)
-        throws IOException {
-      return new Dictionary(database, name, filePath, fileId, mode, pageSize);
+    public PaginatedComponent createOnLoad(final DatabaseInternal database, final String name, final String filePath, final int fileId,
+        final PaginatedFile.MODE mode, final int pageSize, final int version) throws IOException {
+      return new Dictionary(database, name, filePath, fileId, mode, pageSize, version);
     }
   }
 
@@ -62,11 +57,10 @@ public class Dictionary extends PaginatedComponent {
    * Called at creation time.
    */
   public Dictionary(final DatabaseInternal database, final String name, String filePath, final PaginatedFile.MODE mode, final int pageSize) throws IOException {
-    super(database, name, filePath, DICT_EXT, mode, pageSize);
+    super(database, name, filePath, DICT_EXT, mode, pageSize, CURRENT_VERSION);
     if (file.getSize() == 0) {
       // NEW FILE, CREATE HEADER PAGE
       final MutablePage header = database.getTransaction().addPage(new PageId(file.getFileId(), 0), pageSize);
-      itemCount = 0;
       updateCounters(header);
     }
   }
@@ -74,9 +68,9 @@ public class Dictionary extends PaginatedComponent {
   /**
    * Called at load time.
    */
-  public Dictionary(final DatabaseInternal database, final String name, final String filePath, final int id, final PaginatedFile.MODE mode, final int pageSize)
-      throws IOException {
-    super(database, name, filePath, id, mode, pageSize);
+  public Dictionary(final DatabaseInternal database, final String name, final String filePath, final int id, final PaginatedFile.MODE mode, final int pageSize,
+      final int version) throws IOException {
+    super(database, name, filePath, id, mode, pageSize, version);
     reload();
   }
 
@@ -90,22 +84,26 @@ public class Dictionary extends PaginatedComponent {
       synchronized (this) {
         pos = dictionaryMap.get(name);
         if (pos == null) {
-          final int itemCountBeforeIncrement = itemCount;
 
-          try {
-            database.transaction((tx) -> {
-              itemCount = itemCountBeforeIncrement; // RESET COUNTER IN CASE OF RETRY
-              addItemToPage(name);
-            }, false);
+          final AtomicInteger newPos = new AtomicInteger();
 
-            if (dictionaryMap.putIfAbsent(name, itemCountBeforeIncrement) == null)
-              dictionary.add(name);
-            pos = dictionaryMap.get(name);
+          database.transaction(() -> {
+            newPos.set(dictionary.size());
+            addItemToPage(name);
+          }, false);
 
-          } catch (Exception e) {
-            itemCount = itemCountBeforeIncrement; // RESET COUNTER IN CASE OF ERROR
-            throw e;
+          if (dictionaryMap.putIfAbsent(name, newPos.get()) == null) {
+            dictionary.add(name);
+            if (dictionary.size() != newPos.get() + 1) {
+              try {
+                reload();
+              } catch (IOException e) {
+                // IGNORE IT
+              }
+              throw new SchemaException("Error on updating dictionary for key '" + name + "'");
+            }
           }
+          pos = dictionaryMap.get(name);
         }
       }
     }
@@ -173,19 +171,14 @@ public class Dictionary extends PaginatedComponent {
       header.clearContent();
       updateCounters(header);
 
-      itemCount = 0;
       for (String d : dictionary) {
-        final byte[] property = d.getBytes();
+        final byte[] property = d.getBytes(DatabaseFactory.getDefaultCharset());
 
         if (header.getAvailableContentSize() < Binary.SHORT_SERIALIZED_SIZE + property.length)
-          throw new DatabaseMetadataException("No space left in dictionary file (items=" + itemCount + ")");
+          throw new DatabaseMetadataException("No space left in dictionary file (items=" + dictionary.size() + ")");
 
         header.writeString(header.getContentSize(), d);
-
-        itemCount++;
       }
-
-      updateCounters(header);
 
       final Integer newIndex = dictionaryMap.get(newName);
       if (newIndex == null)
@@ -205,54 +198,49 @@ public class Dictionary extends PaginatedComponent {
     if (!database.isTransactionActive())
       throw new SchemaException("Error on adding new item to the database schema dictionary because no transaction was active");
 
-    final byte[] property = propertyName.getBytes();
+    final byte[] property = propertyName.getBytes(DatabaseFactory.getDefaultCharset());
 
     final MutablePage header;
     try {
       header = database.getTransaction().getPageToModify(new PageId(file.getFileId(), 0), pageSize, false);
 
       if (header.getAvailableContentSize() < Binary.SHORT_SERIALIZED_SIZE + property.length)
-        throw new DatabaseMetadataException("No space left in dictionary file (items=" + itemCount + ")");
+        throw new DatabaseMetadataException("No space left in dictionary file (items=" + dictionary.size() + ")");
 
       header.writeString(header.getContentSize(), propertyName);
 
-      itemCount++;
-
-      updateCounters(header);
     } catch (IOException e) {
       throw new SchemaException("Error on adding new item to the database schema dictionary");
     }
   }
 
   private void updateCounters(final MutablePage header) {
-    header.writeInt(DICTIONARY_ITEM_COUNT, itemCount);
+    // THIS IS LEGACY CODE CONTAINING THE NUMBER OF ITEMS. NOW THE ITEMS ARE DIRECTLY READ FORM THE PAGE
+    header.writeInt(0, 0);
   }
 
   public void reload() throws IOException {
     if (file.getSize() == 0) {
       // NEW FILE, CREATE HEADER PAGE
       final MutablePage header = database.getTransaction().addPage(new PageId(file.getFileId(), 0), pageSize);
-      itemCount = 0;
       updateCounters(header);
 
     } else {
       final BasePage header = database.getTransaction().getPage(new PageId(file.getFileId(), 0), pageSize);
 
       header.setBufferPosition(0);
-      final int newItemCount = header.readInt(DICTIONARY_ITEM_COUNT);
 
       final List<String> newDictionary = new CopyOnWriteArrayList<>();
 
       // LOAD THE DICTIONARY IN RAM
       header.setBufferPosition(DICTIONARY_HEADER_SIZE);
-      for (int i = 0; i < newItemCount; ++i)
+      for (int i = 0; header.getBufferPosition() < header.getContentSize(); ++i)
         newDictionary.add(header.readString());
 
-      final Map<String, Integer> newDictionaryMap = new ConcurrentHashMap<>();
+      final ConcurrentMap<String, Integer> newDictionaryMap = new ConcurrentHashMap<>();
       for (int i = 0; i < newDictionary.size(); ++i)
         newDictionaryMap.putIfAbsent(newDictionary.get(i), i);
 
-      this.itemCount = newItemCount;
       this.dictionary = newDictionary;
       this.dictionaryMap = newDictionaryMap;
     }

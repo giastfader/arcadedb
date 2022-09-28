@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package performance;
 
 import com.arcadedb.GlobalConfiguration;
@@ -31,8 +28,8 @@ import com.arcadedb.schema.Schema;
 import com.arcadedb.schema.VertexType;
 import org.junit.jupiter.api.Assertions;
 
-import java.util.UUID;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.logging.*;
 
 public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
   public static void main(final String[] args) {
@@ -70,37 +67,9 @@ public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
       databases[i] = new DatabaseFactory(getDatabasePath(i)).create();
     }
 
-    getDatabase(0).transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        if (isPopulateDatabase()) {
-          Assertions.assertFalse(database.getSchema().existsType("Device"));
-
-          VertexType v = database.getSchema().createVertexType("Device", parallel);
-
-          v.createProperty("id", String.class);
-          v.createProperty("lastModifiedUserId", String.class);
-          v.createProperty("createdDate", String.class);
-          v.createProperty("assocJointClosureId", String.class);
-          v.createProperty("HolderSpec_Name", String.class);
-          v.createProperty("number", String.class);
-          v.createProperty("relativeName", String.class);
-          v.createProperty("Name", String.class);
-          v.createProperty("holderGroupName", String.class);
-          v.createProperty("slot2slottype", String.class);
-          v.createProperty("inventoryStatus", String.class);
-          v.createProperty("lastModifiedDate", String.class);
-          v.createProperty("createdUserId", String.class);
-          v.createProperty("orientation", String.class);
-          v.createProperty("operationalStatus", String.class);
-          v.createProperty("supplierName", String.class);
-
-          database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "id" }, 2 * 1024 * 1024);
-          database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "number" }, 2 * 1024 * 1024);
-          database.getSchema()
-              .createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "relativeName" }, 2 * 1024 * 1024);
-        }
-      }
+    final Database database = getDatabase(0);
+    database.transaction(() -> {
+      populateDatabase(parallel, database);
     });
 
     // CLOSE ALL DATABASES BEFORE TO START THE SERVERS
@@ -115,10 +84,9 @@ public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
     Database db = getServerDatabase(0, getDatabaseName());
 
 //    db.begin();
-//    db.getTransaction().setWALFlush(WALFile.FLUSH_TYPE.YES_NO_METADATA);
+//    db.setWALFlush(WALFile.FLUSH_TYPE.YES_NO_METADATA);
 
-    LogManager.instance()
-        .log(this, Level.INFO, "TEST: Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
+    LogManager.instance().log(this, Level.INFO, "TEST: Executing %s transactions with %d vertices each...", null, getTxs(), getVerticesPerTx());
 
     final int totalToInsert = getTxs() * getVerticesPerTx();
     long counter = 0;
@@ -164,8 +132,7 @@ public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
 
         if (counter % 1000 == 0) {
           if (System.currentTimeMillis() - lastLap > 1000) {
-            LogManager.instance()
-                .log(this, Level.INFO, "TEST: - Progress %d/%d (%d records/sec)", null, counter, totalToInsert, counter - lastLapCounter);
+            LogManager.instance().log(this, Level.INFO, "TEST: - Progress %d/%d (%d records/sec)", null, counter, totalToInsert, counter - lastLapCounter);
             lastLap = System.currentTimeMillis();
             lastLapCounter = counter;
           }
@@ -175,7 +142,7 @@ public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
 //      db.commit();
 //
 //      db.begin();
-//      db.getTransaction().setWALFlush(WALFile.FLUSH_TYPE.YES_NO_METADATA);
+//      db.setWALFlush(WALFile.FLUSH_TYPE.YES_NO_METADATA);
     }
 
     db.async().waitCompletion();
@@ -188,6 +155,33 @@ public class ReplicationSpeedQuorumMajorityIT extends BasePerformanceTest {
 
     //endTest();
     stopServers();
+  }
+
+  protected void populateDatabase(final int parallel, final Database database) {
+    Assertions.assertFalse(database.getSchema().existsType("Device"));
+
+    VertexType v = database.getSchema().createVertexType("Device", parallel);
+
+    v.createProperty("id", String.class);
+    v.createProperty("lastModifiedUserId", String.class);
+    v.createProperty("createdDate", String.class);
+    v.createProperty("assocJointClosureId", String.class);
+    v.createProperty("HolderSpec_Name", String.class);
+    v.createProperty("number", String.class);
+    v.createProperty("relativeName", String.class);
+    v.createProperty("Name", String.class);
+    v.createProperty("holderGroupName", String.class);
+    v.createProperty("slot2slottype", String.class);
+    v.createProperty("inventoryStatus", String.class);
+    v.createProperty("lastModifiedDate", String.class);
+    v.createProperty("createdUserId", String.class);
+    v.createProperty("orientation", String.class);
+    v.createProperty("operationalStatus", String.class);
+    v.createProperty("supplierName", String.class);
+
+    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "id" }, 2 * 1024 * 1024);
+    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "number" }, 2 * 1024 * 1024);
+    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "relativeName" }, 2 * 1024 * 1024);
   }
 
 }

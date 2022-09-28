@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Document;
@@ -27,11 +24,16 @@ import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
 import com.arcadedb.exception.CommandExecutionException;
 import com.arcadedb.exception.TimeoutException;
-import com.arcadedb.query.sql.parser.*;
+import com.arcadedb.query.sql.parser.BinaryCompareOperator;
+import com.arcadedb.query.sql.parser.BinaryCondition;
+import com.arcadedb.query.sql.parser.BooleanExpression;
+import com.arcadedb.query.sql.parser.GeOperator;
+import com.arcadedb.query.sql.parser.GtOperator;
+import com.arcadedb.query.sql.parser.LeOperator;
+import com.arcadedb.query.sql.parser.LtOperator;
+import com.arcadedb.query.sql.parser.Rid;
 
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * @author Luigi Dell'Aquila (luigi.dellaquila-(at)-gmail.com)
@@ -64,24 +66,24 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
     long begin = profilingEnabled ? System.nanoTime() : 0;
     try {
       if (iterator == null) {
-        long minClusterPosition = calculateMinClusterPosition();
-        long maxClusterPosition = calculateMaxClusterPosition();
         iterator = ctx.getDatabase().getSchema().getBucketById(bucketId).iterator();
 
         //TODO check how to support ranges and DESC
+//        long minClusterPosition = calculateMinClusterPosition();
+//        long maxClusterPosition = calculateMaxClusterPosition();
 //            new ORecordIteratorCluster((ODatabaseDocumentInternal) ctx.getDatabase(),
 //            (ODatabaseDocumentInternal) ctx.getDatabase(), bucketId, minClusterPosition, maxClusterPosition);
 //        if (ORDER_DESC == order) {
 //          iterator.last();
 //        }
       }
-      ResultSet rs = new ResultSet() {
+      return new ResultSet() {
 
         int nFetched = 0;
 
         @Override
         public boolean hasNext() {
-          long begin = profilingEnabled ? System.nanoTime() : 0;
+          long begin1 = profilingEnabled ? System.nanoTime() : 0;
           try {
             if (nFetched >= nRecords) {
               return false;
@@ -94,14 +96,14 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
 //            }
           } finally {
             if (profilingEnabled) {
-              cost += (System.nanoTime() - begin);
+              cost += (System.nanoTime() - begin1);
             }
           }
         }
 
         @Override
         public Result next() {
-          long begin = profilingEnabled ? System.nanoTime() : 0;
+          long begin1 = profilingEnabled ? System.nanoTime() : 0;
           try {
             if (nFetched >= nRecords) {
               throw new IllegalStateException();
@@ -126,7 +128,7 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
             return result;
           } finally {
             if (profilingEnabled) {
-              cost += (System.nanoTime() - begin);
+              cost += (System.nanoTime() - begin1);
             }
           }
         }
@@ -138,7 +140,7 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
 
         @Override
         public Optional<ExecutionPlan> getExecutionPlan() {
-          return null;
+          return Optional.empty();
         }
 
         @Override
@@ -147,7 +149,6 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
         }
 
       };
-      return rs;
     } finally {
       if (profilingEnabled) {
         cost += (System.nanoTime() - begin);
@@ -217,16 +218,6 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
   }
 
   @Override
-  public void sendTimeout() {
-    super.sendTimeout();
-  }
-
-  @Override
-  public void close() {
-    super.close();
-  }
-
-  @Override
   public String prettyPrint(int depth, int indent) {
     String result =
         ExecutionStepInternal.getIndent(depth, indent) + "+ FETCH FROM BUCKET " + bucketId + " (" + ctx.getDatabase().getSchema().getBucketById(bucketId)
@@ -275,8 +266,7 @@ public class FetchFromClusterExecutionStep extends AbstractExecutionStep {
 
   @Override
   public ExecutionStep copy(CommandContext ctx) {
-    FetchFromClusterExecutionStep result = new FetchFromClusterExecutionStep(this.bucketId, this.queryPlanning == null ? null : this.queryPlanning.copy(), ctx,
+    return new FetchFromClusterExecutionStep(this.bucketId, this.queryPlanning == null ? null : this.queryPlanning.copy(), ctx,
         profilingEnabled);
-    return result;
   }
 }

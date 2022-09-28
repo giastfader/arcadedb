@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index;
 
 import com.arcadedb.GlobalConfiguration;
@@ -35,11 +32,9 @@ import com.arcadedb.schema.Schema;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Iterator;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.concurrent.CountDownLatch;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 /**
  * This test stresses the index compaction by forcing using only 1MB of RAM for compaction causing multiple page compacted index.
@@ -130,22 +125,19 @@ public class LSMTreeIndexCompactionTest extends TestHelper {
   }
 
   private void insertData() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        if (!database.getSchema().existsType(TYPE_NAME)) {
-          DocumentType v = database.getSchema().createDocumentType(TYPE_NAME, PARALLEL);
+    database.transaction(() -> {
+      if (!database.getSchema().existsType(TYPE_NAME)) {
+        DocumentType v = database.getSchema().createDocumentType(TYPE_NAME, PARALLEL);
 
-          v.createProperty("id", String.class);
-          v.createProperty("number", String.class);
-          v.createProperty("relativeName", String.class);
+        v.createProperty("id", String.class);
+        v.createProperty("number", String.class);
+        v.createProperty("relativeName", String.class);
 
-          v.createProperty("Name", String.class);
+        v.createProperty("Name", String.class);
 
-          database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "id" }, INDEX_PAGE_SIZE);
-          database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "number" }, INDEX_PAGE_SIZE);
-          database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "relativeName" }, INDEX_PAGE_SIZE);
-        }
+        database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "id" }, INDEX_PAGE_SIZE);
+        database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "number" }, INDEX_PAGE_SIZE);
+        database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, "Device", new String[] { "relativeName" }, INDEX_PAGE_SIZE);
       }
     });
 
@@ -172,7 +164,7 @@ public class LSMTreeIndexCompactionTest extends TestHelper {
 
       database.async().transaction(new Database.TransactionScope() {
         @Override
-        public void execute(Database database) {
+        public void execute() {
           long lastLap = startTimer;
           long lastLapCounter = 0;
 
@@ -211,12 +203,7 @@ public class LSMTreeIndexCompactionTest extends TestHelper {
   }
 
   private void checkLookups(final int step, final int expectedItems) {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        Assertions.assertEquals(TOT * expectedItems, database.countType(TYPE_NAME, false));
-      }
-    });
+    database.transaction(() -> Assertions.assertEquals(TOT * expectedItems, database.countType(TYPE_NAME, false)));
 
     LogManager.instance().log(this, Level.FINE, "TEST: Lookup all the keys...");
 

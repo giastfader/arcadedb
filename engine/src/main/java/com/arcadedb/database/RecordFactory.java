@@ -1,29 +1,34 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.exception.DatabaseMetadataException;
-import com.arcadedb.graph.*;
+import com.arcadedb.graph.Edge;
+import com.arcadedb.graph.EdgeSegment;
+import com.arcadedb.graph.ImmutableEdge;
+import com.arcadedb.graph.ImmutableVertex;
+import com.arcadedb.graph.MutableEdge;
+import com.arcadedb.graph.MutableEdgeSegment;
+import com.arcadedb.graph.MutableVertex;
+import com.arcadedb.graph.Vertex;
 import com.arcadedb.schema.DocumentType;
+import com.arcadedb.schema.VertexType;
 
 public class RecordFactory {
   public Record newImmutableRecord(final Database database, final DocumentType type, final RID rid, final byte recordType) {
@@ -60,8 +65,18 @@ public class RecordFactory {
     throw new DatabaseMetadataException("Cannot find record type '" + recordType + "'");
   }
 
-  public Record newModifiableRecord(final Database database, final DocumentType type, final RID rid, final Binary content, final EmbeddedModifier modifier) {
+  public Record newMutableRecord(final Database database, final DocumentType type) {
+    if (type instanceof VertexType)
+      return new MutableVertex(database, type, null);
+    if (type instanceof VertexType)
+      return new MutableEdge(database, type, null);
+    return new MutableDocument(database, type, null);
+  }
+
+  public Record newMutableRecord(final Database database, final DocumentType type, final RID rid, final Binary content, final EmbeddedModifier modifier) {
+    final int pos = content.position();
     final byte recordType = content.getByte();
+    content.position(pos);
 
     switch (recordType) {
     case Document.RECORD_TYPE:

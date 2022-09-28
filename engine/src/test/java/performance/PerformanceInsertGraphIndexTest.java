@@ -1,26 +1,24 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package performance;
 
+import com.arcadedb.NullLogger;
 import com.arcadedb.TestHelper;
 import com.arcadedb.database.async.ErrorCallback;
 import com.arcadedb.database.bucketselectionstrategy.PartitionedBucketSelectionStrategy;
@@ -31,15 +29,14 @@ import com.arcadedb.graph.Vertex;
 import com.arcadedb.index.Index;
 import com.arcadedb.index.IndexCursor;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.log.Logger;
 import com.arcadedb.schema.EdgeType;
 import com.arcadedb.schema.Schema;
 import com.arcadedb.schema.VertexType;
 import com.arcadedb.utility.FileUtils;
 import org.junit.jupiter.api.Assertions;
 
-import java.io.File;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.logging.*;
 
 /**
  * Inserts a graph. Configurations:
@@ -49,7 +46,7 @@ import java.util.logging.Level;
  * @author Luca Garulli (l.garulli@arcadedata.com)
  */
 public class PerformanceInsertGraphIndexTest extends TestHelper {
-  private static       boolean CREATEDB         = true;
+  private static final boolean CREATEDB         = true;
   private static final int     VERTICES         = 5_000_000; //31_623;
   private static final int     EDGES_PER_VERTEX = 20; //31_623;
   private static final String  VERTEX_TYPE_NAME = "Person";
@@ -65,6 +62,8 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
       FileUtils.deleteRecursively(new File(PerformanceTest.DATABASE_PATH));
 
     final PerformanceInsertGraphIndexTest test = new PerformanceInsertGraphIndexTest();
+
+    test.database.setReadYourWrites(false);
 
     try {
       // PHASE 1
@@ -108,8 +107,8 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
     database.begin();
 
     if (!USE_WAL) {
-      database.getTransaction().setUseWAL(false);
-      database.getTransaction().setWALFlush(WALFile.FLUSH_TYPE.NO);
+      database.setUseWAL(false);
+      database.setWALFlush(WALFile.FLUSH_TYPE.NO);
     }
 
     final long begin = System.currentTimeMillis();
@@ -144,8 +143,8 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
           database.commit();
           database.begin();
           if (!USE_WAL) {
-            database.getTransaction().setUseWAL(false);
-            database.getTransaction().setWALFlush(WALFile.FLUSH_TYPE.NO);
+            database.setUseWAL(false);
+            database.setWALFlush(WALFile.FLUSH_TYPE.NO);
           }
         }
       }
@@ -167,7 +166,7 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
     final Vertex[] cachedVertices = new Vertex[VERTICES];
 
     System.out.println("Loading " + VERTICES + " vertices in RAM...");
-    database.transaction((tx) -> {
+    database.transaction(() -> {
       final long begin = System.currentTimeMillis();
       try {
         int counter = 0;
@@ -232,21 +231,17 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
   }
 
   private void createSchema() {
-    database.begin();
-
     final VertexType vertex = database.getSchema().createVertexType(VERTEX_TYPE_NAME, PARALLEL);
     vertex.createProperty("id", Integer.class);
-    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, VERTEX_TYPE_NAME, new String[] { "id" });
+    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, VERTEX_TYPE_NAME, "id");
     vertex.setBucketSelectionStrategy(new PartitionedBucketSelectionStrategy(new String[] { "id" }));
 
     final EdgeType edge = database.getSchema().createEdgeType(EDGE_TYPE_NAME, PARALLEL);
     if (EDGE_IDS) {
       edge.createProperty("id", Integer.class);
-      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, EDGE_TYPE_NAME, new String[] { "id" });
+      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, EDGE_TYPE_NAME, "id");
       edge.setBucketSelectionStrategy(new PartitionedBucketSelectionStrategy(new String[] { "id" }));
     }
-
-    database.commit();
   }
 
   private void checkEdgeIds() {
@@ -266,7 +261,7 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
       for (; j < expectedTotalEdges; j++) {
         IndexCursor edgeCursor = index.get(new Object[] { j });
         Assertions.assertTrue(edgeCursor.hasNext());
-        final Edge e = (Edge) edgeCursor.next().getRecord(true);
+        final Edge e = edgeCursor.next().asEdge(true);
         Assertions.assertNotNull(e);
         Assertions.assertEquals(j, e.get("id"));
 
@@ -343,21 +338,7 @@ public class PerformanceInsertGraphIndexTest extends TestHelper {
 
   @Override
   protected String getPerformanceProfile() {
-    LogManager.instance().setLogger(new Logger() {
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object arg1, Object arg2, Object arg3,
-          Object arg4, Object arg5, Object arg6, Object arg7, Object arg8, Object arg9, Object arg10, Object arg11, Object arg12, Object arg13, Object arg14,
-          Object arg15, Object arg16, Object arg17) {
-      }
-
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object... args) {
-      }
-
-      @Override
-      public void flush() {
-      }
-    });
+    LogManager.instance().setLogger(NullLogger.INSTANCE);
 
     return "high-performance";
   }

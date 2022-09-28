@@ -1,34 +1,51 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.ContextConfiguration;
 import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseContext;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.DocumentCallback;
+import com.arcadedb.database.DocumentIndexer;
+import com.arcadedb.database.EmbeddedDatabase;
+import com.arcadedb.database.EmbeddedModifier;
+import com.arcadedb.database.MutableDocument;
+import com.arcadedb.database.MutableEmbeddedDocument;
+import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
-import com.arcadedb.database.*;
-import com.arcadedb.database.async.DatabaseAsyncExecutorImpl;
+import com.arcadedb.database.RecordCallback;
+import com.arcadedb.database.RecordEvents;
+import com.arcadedb.database.RecordFactory;
+import com.arcadedb.database.TransactionContext;
+import com.arcadedb.database.async.DatabaseAsyncExecutor;
 import com.arcadedb.database.async.ErrorCallback;
 import com.arcadedb.database.async.OkCallback;
-import com.arcadedb.engine.*;
+import com.arcadedb.engine.ErrorRecordCallback;
+import com.arcadedb.engine.FileManager;
+import com.arcadedb.engine.PageManager;
+import com.arcadedb.engine.PaginatedFile;
+import com.arcadedb.engine.TransactionManager;
+import com.arcadedb.engine.WALFile;
+import com.arcadedb.engine.WALFileFactory;
 import com.arcadedb.exception.ConfigurationException;
 import com.arcadedb.exception.NeedRetryException;
 import com.arcadedb.exception.TransactionException;
@@ -37,31 +54,32 @@ import com.arcadedb.graph.GraphEngine;
 import com.arcadedb.graph.MutableVertex;
 import com.arcadedb.graph.Vertex;
 import com.arcadedb.index.IndexCursor;
+import com.arcadedb.network.binary.ServerIsNotTheLeaderException;
+import com.arcadedb.query.QueryEngine;
 import com.arcadedb.query.sql.executor.ResultSet;
 import com.arcadedb.query.sql.parser.ExecutionPlanCache;
 import com.arcadedb.query.sql.parser.StatementCache;
 import com.arcadedb.schema.Schema;
+import com.arcadedb.security.SecurityDatabaseUser;
 import com.arcadedb.serializer.BinarySerializer;
 import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.ha.message.CommandForwardRequest;
+import com.arcadedb.server.ha.message.DatabaseAlignRequest;
+import com.arcadedb.server.ha.message.DatabaseAlignResponse;
 import com.arcadedb.server.ha.message.DatabaseChangeStructureRequest;
 import com.arcadedb.server.ha.message.TxForwardRequest;
 import com.arcadedb.server.ha.message.TxRequest;
-import com.arcadedb.utility.Pair;
+import org.json.JSONObject;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicReference;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 public class ReplicatedDatabase implements DatabaseInternal {
   private final ArcadeDBServer   server;
   private final EmbeddedDatabase proxied;
-  private final ReplicatedSchema schema;
-  private       HAServer.QUORUM  quorum;
+  private final HAServer.QUORUM  quorum;
   private final long             timeout;
 
   public ReplicatedDatabase(final ArcadeDBServer server, final EmbeddedDatabase proxied) {
@@ -73,8 +91,6 @@ public class ReplicatedDatabase implements DatabaseInternal {
     this.quorum = HAServer.QUORUM.valueOf(proxied.getConfiguration().getValueAsString(GlobalConfiguration.HA_QUORUM).toUpperCase());
     this.timeout = proxied.getConfiguration().getValueAsLong(GlobalConfiguration.HA_QUORUM_TIMEOUT);
     this.proxied.setWrappedDatabaseInstance(this);
-
-    this.schema = new ReplicatedSchema(this, proxied.getSchema().getEmbedded());
   }
 
   @Override
@@ -83,53 +99,50 @@ public class ReplicatedDatabase implements DatabaseInternal {
 
     final boolean isLeader = server.getHA().isLeader();
 
-    proxied.executeInReadLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        proxied.checkTransactionIsActive(false);
+    proxied.executeInReadLock(() -> {
+      proxied.checkTransactionIsActive(false);
 
-        final DatabaseContext.DatabaseContextTL current = DatabaseContext.INSTANCE.getContext(proxied.getDatabasePath());
-        final TransactionContext tx = current.getLastTransaction();
+      final DatabaseContext.DatabaseContextTL current = DatabaseContext.INSTANCE.getContext(proxied.getDatabasePath());
+      final TransactionContext tx = current.getLastTransaction();
+      try {
+
+        final TransactionContext.TransactionPhase1 phase1 = tx.commit1stPhase(isLeader);
+
         try {
+          if (phase1 != null) {
+            final Binary bufferChanges = phase1.result;
 
-          final Pair<Binary, List<MutablePage>> changes = tx.commit1stPhase(isLeader);
-
-          try {
-            if (changes != null) {
-              final Binary bufferChanges = changes.getFirst();
-
-              if (isLeader)
-                replicateTx(tx, changes, bufferChanges);
-              else {
-                // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
-                final TxForwardRequest command = new TxForwardRequest(ReplicatedDatabase.this, bufferChanges, tx.getIndexChanges().toMap());
-                server.getHA().forwardCommandToLeader(command, timeout * 2);
-                tx.reset();
-              }
-            } else {
+            if (isLeader)
+              replicateTx(tx, phase1, bufferChanges);
+            else {
+              // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
+              final TxForwardRequest command = new TxForwardRequest(ReplicatedDatabase.this, bufferChanges, tx.getIndexChanges().toMap());
+              server.getHA().forwardCommandToLeader(command, timeout * 2);
               tx.reset();
             }
-          } catch (NeedRetryException e) {
-            rollback();
-            throw e;
-          } catch (TransactionException e) {
-            rollback();
-            throw e;
-          } catch (Exception e) {
-            rollback();
-            throw new TransactionException("Error on commit distributed transaction", e);
+          } else {
+            tx.reset();
           }
-
-        } finally {
-          current.popIfNotLastTransaction();
+        } catch (NeedRetryException | TransactionException e) {
+          rollback();
+          throw e;
+        } catch (Exception e) {
+          rollback();
+          throw new TransactionException("Error on commit distributed transaction", e);
         }
 
-        return null;
+        if (getSchema().getEmbedded().isDirty())
+          getSchema().getEmbedded().saveConfiguration();
+
+      } finally {
+        current.popIfNotLastTransaction();
       }
+
+      return null;
     });
   }
 
-  public void replicateTx(final TransactionContext tx, final Pair<Binary, List<MutablePage>> changes, final Binary bufferChanges) {
+  public void replicateTx(final TransactionContext tx, final TransactionContext.TransactionPhase1 phase1, final Binary bufferChanges) {
     final int configuredServers = server.getHA().getConfiguredServers();
 
     final int reqQuorum;
@@ -156,10 +169,20 @@ public class ReplicatedDatabase implements DatabaseInternal {
       throw new IllegalArgumentException("Quorum " + quorum + " not managed");
     }
 
-    server.getHA().sendCommandToReplicasWithQuorum(new TxRequest(getName(), bufferChanges, reqQuorum > 1), reqQuorum, timeout);
+    final TxRequest req = new TxRequest(getName(), bufferChanges, reqQuorum > 1);
+
+    final DatabaseChangeStructureRequest changeStructureRequest = getChangeStructure(-1);
+    if (changeStructureRequest != null) {
+      // RESET STRUCTURE CHANGES FROM THIS POINT ONWARDS
+      proxied.getFileManager().stopRecordingChanges();
+      proxied.getFileManager().startRecordingChanges();
+      req.changeStructure = changeStructureRequest;
+    }
+
+    server.getHA().sendCommandToReplicasWithQuorum(req, reqQuorum, timeout);
 
     // COMMIT 2ND PHASE ONLY IF THE QUORUM HAS BEEN REACHED
-    tx.commit2ndPhase(changes);
+    tx.commit2ndPhase(phase1);
   }
 
   public long getTimeout() {
@@ -173,6 +196,36 @@ public class ReplicatedDatabase implements DatabaseInternal {
   @Override
   public DatabaseInternal getWrappedDatabaseInstance() {
     return this;
+  }
+
+  @Override
+  public Map<String, Object> getWrappers() {
+    return proxied.getWrappers();
+  }
+
+  @Override
+  public void setWrapper(String name, Object instance) {
+    proxied.setWrapper(name, instance);
+  }
+
+  @Override
+  public void checkPermissionsOnDatabase(final SecurityDatabaseUser.DATABASE_ACCESS access) {
+    proxied.checkPermissionsOnDatabase(access);
+  }
+
+  @Override
+  public void checkPermissionsOnFile(final int fileId, final SecurityDatabaseUser.ACCESS access) {
+    proxied.checkPermissionsOnFile(fileId, access);
+  }
+
+  @Override
+  public long getResultSetLimit() {
+    return proxied.getResultSetLimit();
+  }
+
+  @Override
+  public long getReadTimeout() {
+    return proxied.getReadTimeout();
   }
 
   @Override
@@ -236,8 +289,8 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public void createRecordNoLock(final Record record, final String bucketName) {
-    proxied.createRecordNoLock(record, bucketName);
+  public void createRecordNoLock(final Record record, final String bucketName, boolean discardRecordAfter) {
+    proxied.createRecordNoLock(record, bucketName, false);
   }
 
   @Override
@@ -246,8 +299,13 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public void updateRecordNoLock(final Record record) {
-    proxied.updateRecordNoLock(record);
+  public void updateRecordNoLock(final Record record, boolean discardRecordAfter) {
+    proxied.updateRecordNoLock(record, discardRecordAfter);
+  }
+
+  @Override
+  public void deleteRecordNoLock(final Record record) {
+    proxied.deleteRecordNoLock(record);
   }
 
   @Override
@@ -276,8 +334,8 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public int getEdgeListSize(int previousSize) {
-    return proxied.getEdgeListSize(previousSize);
+  public int getNewEdgeListSize(int previousSize) {
+    return proxied.getNewEdgeListSize(previousSize);
   }
 
   @Override
@@ -291,13 +349,18 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public DatabaseAsyncExecutorImpl async() {
+  public DatabaseAsyncExecutor async() {
     return proxied.async();
   }
 
   @Override
   public String getDatabasePath() {
     return proxied.getDatabasePath();
+  }
+
+  @Override
+  public String getCurrentUserName() {
+    return proxied.getCurrentUserName();
   }
 
   @Override
@@ -356,8 +419,18 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
+  public void scanType(String typeName, boolean polymorphic, DocumentCallback callback, ErrorRecordCallback errorRecordCallback) {
+    proxied.scanType(typeName, polymorphic, callback, errorRecordCallback);
+  }
+
+  @Override
   public void scanBucket(final String bucketName, final RecordCallback callback) {
     proxied.scanBucket(bucketName, callback);
+  }
+
+  @Override
+  public void scanBucket(String bucketName, RecordCallback callback, ErrorRecordCallback errorRecordCallback) {
+    proxied.scanBucket(bucketName, callback, errorRecordCallback);
   }
 
   @Override
@@ -435,7 +508,12 @@ public class ReplicatedDatabase implements DatabaseInternal {
 
   @Override
   public Schema getSchema() {
-    return schema;
+    return proxied.getSchema();
+  }
+
+  @Override
+  public RecordEvents getEvents() {
+    return proxied.getEvents();
   }
 
   @Override
@@ -473,43 +551,49 @@ public class ReplicatedDatabase implements DatabaseInternal {
     return proxied.getPageManager();
   }
 
+  @Override
+  public int hashCode() {
+    return proxied.hashCode();
+  }
+
   public boolean equals(final Object o) {
     if (this == o)
       return true;
-    if (o == null || getClass() != o.getClass())
+    if (!(o instanceof Database))
       return false;
 
-    final ReplicatedDatabase pDatabase = (ReplicatedDatabase) o;
-
-    return getDatabasePath() != null ? getDatabasePath().equals(pDatabase.getDatabasePath()) : pDatabase.getDatabasePath() == null;
+    final Database other = (Database) o;
+    return Objects.equals(getDatabasePath(), other.getDatabasePath());
   }
 
   @Override
   public ResultSet command(final String language, final String query, final Object... args) {
     if (!server.getHA().isLeader()) {
-      // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
-      final CommandForwardRequest command = new CommandForwardRequest(ReplicatedDatabase.this, language, query, null, args);
-      ResultSet result = (ResultSet) server.getHA().forwardCommandToLeader(command, timeout * 2);
-      return result;
+      final QueryEngine.AnalyzedQuery analyzed = proxied.getQueryEngineManager().getInstance(language, this).analyze(query);
+      if (analyzed.isDDL()) {
+        // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
+        final CommandForwardRequest command = new CommandForwardRequest(ReplicatedDatabase.this, language, query, null, args);
+        return (ResultSet) server.getHA().forwardCommandToLeader(command, timeout * 2);
+      }
+      return proxied.command(language, query, args);
     }
 
-    return (ResultSet) recordFileChanges(() -> {
-      return proxied.command(language, query, args);
-    });
+    return proxied.command(language, query, args);
   }
 
   @Override
   public ResultSet command(final String language, final String query, final Map<String, Object> args) {
     if (!server.getHA().isLeader()) {
-      // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
-      final CommandForwardRequest command = new CommandForwardRequest(ReplicatedDatabase.this, language, query, args, null);
-      ResultSet result = (ResultSet) server.getHA().forwardCommandToLeader(command, timeout * 2);
-      return result;
+      final QueryEngine.AnalyzedQuery analyzed = proxied.getQueryEngineManager().getInstance(language, this).analyze(query);
+      if (analyzed.isDDL()) {
+        // USE A BIGGER TIMEOUT CONSIDERING THE DOUBLE LATENCY
+        final CommandForwardRequest command = new CommandForwardRequest(ReplicatedDatabase.this, language, query, args, null);
+        return (ResultSet) server.getHA().forwardCommandToLeader(command, timeout * 2);
+      }
+      return proxied.command(language, query, args);
     }
 
-    return (ResultSet) recordFileChanges(() -> {
-      return proxied.command(language, query, args);
-    });
+    return proxied.command(language, query, args);
   }
 
   @Override
@@ -528,17 +612,17 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public ResultSet execute(String language, String script, Map<Object, Object> args) {
+  public ResultSet execute(String language, String script, Map<String, Object> args) {
     return proxied.execute(language, script, args);
   }
 
   @Override
-  public <RET extends Object> RET executeInReadLock(final Callable<RET> callable) {
+  public <RET> RET executeInReadLock(final Callable<RET> callable) {
     return proxied.executeInReadLock(callable);
   }
 
   @Override
-  public <RET extends Object> RET executeInWriteLock(final Callable<RET> callable) {
+  public <RET> RET executeInWriteLock(final Callable<RET> callable) {
     return proxied.executeInWriteLock(callable);
   }
 
@@ -548,13 +632,40 @@ public class ReplicatedDatabase implements DatabaseInternal {
   }
 
   @Override
-  public void setReadYourWrites(final boolean value) {
+  public Database setReadYourWrites(final boolean value) {
     proxied.setReadYourWrites(value);
+    return this;
   }
 
   @Override
-  public void setEdgeListSize(final int size) {
+  public int getEdgeListSize() {
+    return proxied.getEdgeListSize();
+  }
+
+  @Override
+  public Database setEdgeListSize(final int size) {
     proxied.setEdgeListSize(size);
+    return this;
+  }
+
+  @Override
+  public Database setUseWAL(final boolean useWAL) {
+    return proxied.setUseWAL(useWAL);
+  }
+
+  @Override
+  public Database setWALFlush(final WALFile.FLUSH_TYPE flush) {
+    return proxied.setWALFlush(flush);
+  }
+
+  @Override
+  public boolean isAsyncFlush() {
+    return proxied.isAsyncFlush();
+  }
+
+  @Override
+  public Database setAsyncFlush(final boolean value) {
+    return proxied.setAsyncFlush(value);
   }
 
   @Override
@@ -567,47 +678,139 @@ public class ReplicatedDatabase implements DatabaseInternal {
     return proxied.toString();
   }
 
-  protected Object recordFileChanges(final Callable callback) {
+  public <RET> RET recordFileChanges(final Callable<Object> callback) {
     final HAServer ha = server.getHA();
 
-    final AtomicReference result = new AtomicReference();
+    final AtomicReference<Object> result = new AtomicReference<>();
 
     // ACQUIRE A DATABASE WRITE LOCK. THE LOCK IS REENTRANT, SO THE ACQUISITION DOWN THE LINE IS GOING TO PASS BECAUSE ALREADY ACQUIRED HERE
-    final DatabaseChangeStructureRequest command = (DatabaseChangeStructureRequest) proxied.executeInWriteLock(() -> {
-      if (!ha.isLeader())
-        return callback.call();
+    final DatabaseChangeStructureRequest command = proxied.executeInWriteLock(() -> {
+      if (!ha.isLeader()) {
+        // NOT THE LEADER: NOT RESPONSIBLE TO SEND CHANGES TO OTHER SERVERS
+        // TODO: Issue #118SchemaException
+        throw new ServerIsNotTheLeaderException("Changes to the schema must be executed on the leader server", ha.getLeaderName());
+//        result.set(callback.call());
+//        return null;
+      }
 
-      if (!proxied.getFileManager().startRecordingChanges())
+      if (!proxied.getFileManager().startRecordingChanges()) {
         // ALREADY RECORDING
-        return callback.call();
+        result.set(callback.call());
+        return null;
+      }
+
+      final long schemaVersionBefore = proxied.getSchema().getEmbedded().getVersion();
 
       try {
         result.set(callback.call());
 
-        final List<FileManager.FileChange> fileChanges = proxied.getFileManager().getRecordedChanges();
-
-        final Map<Integer, String> addFiles = new HashMap<>();
-        final Map<Integer, String> removeFiles = new HashMap<>();
-        for (FileManager.FileChange c : fileChanges) {
-          if (c.create)
-            addFiles.put(c.fileId, c.fileName);
-          else
-            removeFiles.put(c.fileId, c.fileName);
-        }
-
-        final String schemaJson = proxied.getSchema().getEmbedded().serializeConfiguration().toString();
-
-        return new DatabaseChangeStructureRequest(proxied.getName(), schemaJson, addFiles, removeFiles);
+        return getChangeStructure(schemaVersionBefore);
 
       } finally {
         proxied.getFileManager().stopRecordingChanges();
       }
     });
 
-    // SEND THE COMMAND OUTSIDE THE EXCLUSIVE LOCK
-    final int quorum = ha.getConfiguredServers();
-    ha.sendCommandToReplicasWithQuorum(command, 0, timeout);
+    if (command != null) {
+      // SEND THE COMMAND OUTSIDE THE EXCLUSIVE LOCK
+      final int quorum = ha.getConfiguredServers();
+      ha.sendCommandToReplicasWithQuorum(command, quorum, timeout);
+    }
 
-    return result.get();
+    return (RET) result.get();
+  }
+
+  @Override
+  public void saveConfiguration() throws IOException {
+    proxied.saveConfiguration();
+  }
+
+  /**
+   * Aligns the database against all the replicas. This fixes any replication problem occurred by overwriting the database content of replicas. This process
+   * first calculates the checksum of every files in the database. Then sends the checksums to the replicas, waiting for a response from each of them about
+   * which files differ. In case one or more files differ, a page by page CRC is calculated and sent to the replica. The replica responds with the page id
+   * of the page that differs, so the leader will send only the pages that differ to the replica to be overwritten.
+   */
+  @Override
+  public Map<String, Object> alignToReplicas() {
+    final HAServer ha = server.getHA();
+    if (!ha.isLeader()) {
+      // NOT THE LEADER
+      throw new ServerIsNotTheLeaderException("Align database can be executed only on the leader server", ha.getLeaderName());
+    }
+
+    final Map<String, Object> result = new HashMap<>();
+
+    final int quorum = ha.getConfiguredServers();
+    if (quorum == 1)
+      // NO ACTIVE NODES
+      return result;
+
+    final Map<Integer, Long> fileChecksums = new HashMap<>();
+    final Map<Integer, Long> fileSizes = new HashMap<>();
+
+    // ACQUIRE A READ LOCK. TRANSACTION CAN STILL RUN, BUT CREATION OF NEW FILES (BUCKETS, TYPES, INDEXES) WILL BE PUT ON PAUSE UNTIL THIS LOCK IS RELEASED
+    executeInReadLock(() -> {
+      // AVOID FLUSHING OF DATA PAGES TO DISK
+      proxied.getPageManager().suspendPageFlushing(true);
+      try {
+        final List<PaginatedFile> files = proxied.getFileManager().getFiles();
+
+        for (PaginatedFile paginatedFile : files)
+          if (paginatedFile != null) {
+            long fileChecksum = paginatedFile.calculateChecksum();
+            fileChecksums.put(paginatedFile.getFileId(), fileChecksum);
+            fileSizes.put(paginatedFile.getFileId(), paginatedFile.getSize());
+          }
+
+        final DatabaseAlignRequest request = new DatabaseAlignRequest(getName(), getSchema().getEmbedded().toJSON().toString(), fileChecksums, fileSizes);
+        final List<Object> responsePayloads = ha.sendCommandToReplicasWithQuorum(request, quorum, 120_000);
+
+        if (responsePayloads != null) {
+          for (Object o : responsePayloads) {
+            final DatabaseAlignResponse response = (DatabaseAlignResponse) o;
+            result.put(response.getRemoteServerName(), response.getAlignedPages());
+          }
+        }
+
+      } finally {
+        proxied.getPageManager().suspendPageFlushing(false);
+      }
+      return null;
+    });
+
+    return result;
+  }
+
+  private DatabaseChangeStructureRequest getChangeStructure(final long schemaVersionBefore) {
+    final List<FileManager.FileChange> fileChanges = proxied.getFileManager().getRecordedChanges();
+
+    final boolean schemaChanged = proxied.getSchema().getEmbedded().isDirty() || //
+        schemaVersionBefore < 0 || proxied.getSchema().getEmbedded().getVersion() != schemaVersionBefore;
+
+    if (fileChanges == null ||//
+        (fileChanges.isEmpty() && !schemaChanged))
+      // NO CHANGES
+      return null;
+
+    final Map<Integer, String> addFiles = new HashMap<>();
+    final Map<Integer, String> removeFiles = new HashMap<>();
+    for (FileManager.FileChange c : fileChanges) {
+      if (c.create)
+        addFiles.put(c.fileId, c.fileName);
+      else
+        removeFiles.put(c.fileId, c.fileName);
+    }
+
+    final String serializedSchema;
+    if (schemaChanged) {
+      // SEND THE SCHEMA CONFIGURATION WITH NEXT VERSION (ON CURRENT SERVER WILL BE INCREMENTED + SAVED AT COMMIT TIME)
+      final JSONObject schemaJson = proxied.getSchema().getEmbedded().toJSON();
+      schemaJson.put("schemaVersion", schemaJson.getLong("schemaVersion") + 1);
+      serializedSchema = schemaJson.toString();
+    } else
+      serializedSchema = "";
+
+    return new DatabaseChangeStructureRequest(proxied.getName(), serializedSchema, addFiles, removeFiles);
   }
 }

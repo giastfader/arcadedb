@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Document;
@@ -27,7 +24,7 @@ import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
 
 import java.util.*;
-import java.util.stream.Collectors;
+import java.util.stream.*;
 
 /**
  * Created by luigidellaquila on 06/07/16.
@@ -97,14 +94,14 @@ public class ResultInternal implements Result {
 
   public <T> T getProperty(final String name) {
     T result = null;
-    if (content != null && content.containsKey(name)) {
+    if (content != null && content.containsKey(name))
       result = (T) wrap(content.get(name));
-    } else if (element != null) {
+    else if (element != null)
       result = (T) wrap(element.get(name));
-    }
-    if (result instanceof Identifiable && ((Identifiable) result).getIdentity() != null) {
+
+    if (!(result instanceof Record) && result instanceof Identifiable && ((Identifiable) result).getIdentity() != null)
       result = (T) ((Identifiable) result).getIdentity();
-    }
+
     return result;
   }
 
@@ -142,7 +139,7 @@ public class ResultInternal implements Result {
       return ((Set) input).stream().map(this::wrap).collect(Collectors.toSet());
     } else if (isEmbeddedMap(input)) {
       Map result = new HashMap();
-      for (Map.Entry<Object, Object> o : ((Map<Object, Object>) input).entrySet()) {
+      for (Map.Entry<String, Object> o : ((Map<String, Object>) input).entrySet()) {
         result.put(o.getKey(), wrap(o.getValue()));
       }
       return result;
@@ -213,7 +210,7 @@ public class ResultInternal implements Result {
     if (element != null && element.getPropertyNames().contains(propName))
       return true;
 
-    return content != null && content.keySet().contains(propName);
+    return content != null && content.containsKey(propName);
   }
 
   @Override
@@ -227,7 +224,7 @@ public class ResultInternal implements Result {
 
   @Override
   public Map<String, Object> toMap() {
-    return content;
+    return element != null ? element.toMap() : content;
   }
 
   @Override
@@ -243,6 +240,10 @@ public class ResultInternal implements Result {
     if (element != null)
       return Optional.of(element.getIdentity());
 
+    if (hasProperty("@rid")) {
+      final Object rid = getProperty("@rid");
+      return Optional.of((RID) (rid instanceof RID ? rid : new RID(null, rid.toString())));
+    }
     return Optional.empty();
   }
 
@@ -300,29 +301,6 @@ public class ResultInternal implements Result {
     return metadata == null ? Collections.emptySet() : metadata.keySet();
   }
 
-  private Object convertToElement(final Object property) {
-    if (property instanceof Result) {
-      return ((Result) property).toElement();
-    }
-    if (property instanceof List) {
-      return ((List) property).stream().map(x -> convertToElement(x)).collect(Collectors.toList());
-    }
-
-    if (property instanceof Set) {
-      return ((Set) property).stream().map(x -> convertToElement(x)).collect(Collectors.toSet());
-    }
-
-    if (property instanceof Map) {
-      Map<Object, Object> result = new HashMap<>();
-      Map<Object, Object> prop = ((Map) property);
-      for (Map.Entry<Object, Object> o : prop.entrySet()) {
-        result.put(o.getKey(), convertToElement(o.getValue()));
-      }
-    }
-
-    return property;
-  }
-
   public void setElement(final Document element) {
     this.element = element;
   }
@@ -348,7 +326,7 @@ public class ResultInternal implements Result {
     }
     final ResultInternal resultObj = (ResultInternal) obj;
     if (element != null) {
-      if (!resultObj.getElement().isPresent()) {
+      if (resultObj.getElement().isEmpty()) {
         return false;
       }
       return element.equals(resultObj.getElement().get());
@@ -369,8 +347,6 @@ public class ResultInternal implements Result {
   }
 
   public void setPropertiesFromMap(final Map<String, Object> stats) {
-    for (Map.Entry<String, Object> entry : stats.entrySet()) {
-      content.put(entry.getKey(), entry.getValue());
-    }
+    content.putAll(stats);
   }
 }

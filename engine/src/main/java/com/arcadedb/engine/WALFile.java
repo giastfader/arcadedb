@@ -1,44 +1,38 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.exception.ConfigurationException;
+import com.arcadedb.exception.TransactionException;
 import com.arcadedb.log.LogManager;
+import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.LockContext;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
+import java.io.*;
+import java.nio.*;
+import java.nio.channels.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class WALFile extends LockContext {
   public enum FLUSH_TYPE {
@@ -57,18 +51,17 @@ public class WALFile extends LockContext {
 
   public static final long MAGIC_NUMBER = 9371515385058702L;
 
-  private final    String        filePath;
-  private final    FileChannel   channel;
-  private volatile boolean       active       = true;
-  private volatile boolean       open;
-  private final    AtomicInteger pagesToFlush = new AtomicInteger();
-
-  private long statsPagesWritten = 0;
-  private long statsBytesWritten = 0;
-
+  private final    RandomAccessFile file;
+  private final    String           filePath;
+  private final    FileChannel      channel;
+  private volatile boolean          active            = true;
+  private volatile boolean          open;
+  private final    AtomicInteger    pagesToFlush      = new AtomicInteger();
+  private          long             statsPagesWritten = 0;
+  private          long             statsBytesWritten = 0;
   // STATIC BUFFERS USED FOR RECOVERY
-  private final ByteBuffer bufferLong = ByteBuffer.allocate(Binary.LONG_SERIALIZED_SIZE);
-  private final ByteBuffer bufferInt  = ByteBuffer.allocate(Binary.INT_SERIALIZED_SIZE);
+  private final    ByteBuffer       bufferLong        = ByteBuffer.allocate(Binary.LONG_SERIALIZED_SIZE);
+  private final    ByteBuffer       bufferInt         = ByteBuffer.allocate(Binary.INT_SERIALIZED_SIZE);
 
   public static class WALTransaction {
     public long      txId;
@@ -95,19 +88,27 @@ public class WALFile extends LockContext {
 
   public WALFile(final String filePath) throws FileNotFoundException {
     this.filePath = filePath;
-    this.channel = new RandomAccessFile(filePath, "rw").getChannel();
+    this.file = new RandomAccessFile(filePath, "rw");
+    this.channel = file.getChannel();
     this.open = true;
   }
 
   public synchronized void close() throws IOException {
     this.open = false;
-    channel.close();
+    if (channel != null)
+      channel.close();
+
+    if (file != null)
+      file.close();
+  }
+
+  public boolean isOpen() {
+    return open;
   }
 
   public synchronized void drop() throws IOException {
     close();
-    if (!new File(getFilePath()).delete())
-      LogManager.instance().log(this, Level.WARNING, "Error on deleting file '%s'", null, getFilePath());
+    FileUtils.deleteFile(new File(filePath));
   }
 
   public WALTransaction getFirstTransaction() throws WALException {
@@ -132,14 +133,10 @@ public class WALFile extends LockContext {
     } catch (RuntimeException e) {
       throw e;
     } catch (Exception e) {
-      throw new WALException("Error on writing to WAL file " + getFilePath(), e);
+      throw new WALException("Error on writing to WAL file " + filePath, e);
     }
 
     return true;
-  }
-
-  public boolean isActive() {
-    return active;
   }
 
   public synchronized void setActive(final boolean active) {
@@ -228,6 +225,12 @@ public class WALFile extends LockContext {
     for (MutablePage newPage : pages) {
       final int[] deltaRange = newPage.getModifiedRange();
       final int deltaSize = deltaRange[1] - deltaRange[0] + 1;
+
+      final long totalSizeCheck = 0L + TX_HEADER_SIZE + TX_FOOTER_SIZE + segmentSize + PAGE_HEADER_SIZE + deltaSize; // USE A LONG TO CHECK THE BOUNDARIES
+      if (totalSizeCheck > Integer.MAX_VALUE)
+        throw new TransactionException("Transaction buffer bigger than " + FileUtils.getSizeAsString(Integer.MAX_VALUE)
+            + ". Split the big transaction in smaller transactions. This transaction will be roll backed");
+
       segmentSize += PAGE_HEADER_SIZE + deltaSize;
     }
 
@@ -304,20 +307,12 @@ public class WALFile extends LockContext {
     database.executeCallbacks(DatabaseInternal.CALLBACK_EVENT.TX_AFTER_WAL_WRITE);
   }
 
-  public int getPagesToFlush() {
-    return pagesToFlush.get();
-  }
-
   public void notifyPageFlushed() {
     pagesToFlush.decrementAndGet();
   }
 
   public long getSize() throws IOException {
     return channel.size();
-  }
-
-  public boolean isOpen() {
-    return open;
   }
 
   public String getFilePath() {

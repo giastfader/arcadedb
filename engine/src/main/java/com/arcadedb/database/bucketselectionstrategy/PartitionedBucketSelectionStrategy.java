@@ -1,31 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database.bucketselectionstrategy;
 
 import com.arcadedb.database.Document;
 import com.arcadedb.index.TypeIndex;
 import com.arcadedb.schema.DocumentType;
 
-import java.util.Arrays;
+import java.util.*;
 
 /**
  * Select the bucket using a partition algorithm computed as the hashed value of the properties values. This allows to predetermine in which bucket is contained
@@ -35,9 +32,9 @@ import java.util.Arrays;
  *
  * @author Luca Garulli
  */
-public class PartitionedBucketSelectionStrategy extends DefaultBucketSelectionStrategy {
-  private DocumentType type;
-  private String[]     propertyNames;
+public class PartitionedBucketSelectionStrategy extends RoundRobinBucketSelectionStrategy {
+  private       DocumentType type;
+  private final String[]     propertyNames;
 
   public PartitionedBucketSelectionStrategy(final String[] propertyNames) {
     this.propertyNames = propertyNames;
@@ -67,7 +64,7 @@ public class PartitionedBucketSelectionStrategy extends DefaultBucketSelectionSt
         if (value != null)
           hash += value.hashCode();
       }
-      return Math.abs(hash) % total;
+      return (hash & 0x7fffffff) % total;
     }
 
     return super.getBucketIdByRecord(record, async);
@@ -82,7 +79,7 @@ public class PartitionedBucketSelectionStrategy extends DefaultBucketSelectionSt
         if (value != null)
           hash += value.hashCode();
       }
-      return hash % total;
+      return (hash & 0x7fffffff) % total;
     }
 
     return super.getBucketIdByKeys(keyValues, async);
@@ -90,6 +87,6 @@ public class PartitionedBucketSelectionStrategy extends DefaultBucketSelectionSt
 
   @Override
   public String getName() {
-    return "pk";
+    return "partitioned";
   }
 }

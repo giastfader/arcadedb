@@ -1,35 +1,34 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.apache.tinkerpop.gremlin.arcadedb;
 
 import com.arcadedb.query.sql.executor.Result;
 import com.arcadedb.query.sql.executor.ResultSet;
 import com.arcadedb.utility.FileUtils;
 import org.apache.tinkerpop.gremlin.arcadedb.structure.ArcadeGraph;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.File;
-import java.util.concurrent.ExecutionException;
+import java.io.*;
+import java.util.concurrent.*;
 
 /**
  * @author Luca Garulli (l.garulli@arcadedata.com)
@@ -37,14 +36,12 @@ import java.util.concurrent.ExecutionException;
 public class SQLTest {
   @Test
   public void testSQL() throws ExecutionException, InterruptedException {
-    FileUtils.deleteRecursively(new File("./target/testcypher"));
-
-    final ArcadeGraph graph = ArcadeGraph.open("./target/testcypher");
+    final ArcadeGraph graph = ArcadeGraph.open("./target/testsql");
     try {
 
       graph.getDatabase().getSchema().createVertexType("Person");
 
-      graph.getDatabase().transaction((tx) -> {
+      graph.getDatabase().transaction(() -> {
         for (int i = 0; i < 50; i++)
           graph.getDatabase().newVertex("Person").set("name", "Jay").set("age", i).save();
       });
@@ -62,7 +59,7 @@ public class SQLTest {
         Assertions.assertTrue(row.getProperty("p.age") instanceof Number);
         Assertions.assertTrue((int) row.getProperty("p.age") > lastAge);
 
-        lastAge = (int) row.getProperty("p.age");
+        lastAge = row.getProperty("p.age");
       }
 
       Assertions.assertEquals(25, i);
@@ -70,5 +67,11 @@ public class SQLTest {
     } finally {
       graph.drop();
     }
+  }
+
+  @BeforeEach
+  @AfterEach
+  public void clean() {
+    FileUtils.deleteRecursively(new File("./target/testsql"));
   }
 }

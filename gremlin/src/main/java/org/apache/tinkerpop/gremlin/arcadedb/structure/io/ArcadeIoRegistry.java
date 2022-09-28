@@ -1,48 +1,43 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package org.apache.tinkerpop.gremlin.arcadedb.structure.io;
 
 import com.arcadedb.database.Database;
 import com.arcadedb.database.RID;
-import org.apache.tinkerpop.gremlin.arcadedb.structure.io.graphson.ArcadeGraphSONV3;
-import org.apache.tinkerpop.gremlin.arcadedb.structure.io.gryo.RIDGyroSerializer;
 import org.apache.tinkerpop.gremlin.structure.io.AbstractIoRegistry;
-import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONIo;
-import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoIo;
 
-import java.util.Map;
+import java.util.*;
 
 @SuppressWarnings("serial")
 public class ArcadeIoRegistry extends AbstractIoRegistry {
-
-  public static final String BUCKET_ID       = "bucketId";
-  public static final String BUCKET_POSITION = "bucketPosition";
+  public static final  String           BUCKET_ID       = "bucketId";
+  public static final  String           BUCKET_POSITION = "bucketPosition";
+  private static final ArcadeIoRegistry INSTANCE        = new ArcadeIoRegistry();
 
   private final Database database;
 
+  public ArcadeIoRegistry() {
+    this(null);
+  }
+
   public ArcadeIoRegistry(final Database database) {
     this.database = database;
-    register(GryoIo.class, RID.class, new RIDGyroSerializer());
-    register(GraphSONIo.class, RID.class, new ArcadeGraphSONV3(database));
   }
 
   public Database getDatabase() {
@@ -56,9 +51,10 @@ public class ArcadeIoRegistry extends AbstractIoRegistry {
   public static RID newRID(final Database database, final Object obj) {
     if (obj == null)
       return null;
-
     if (obj instanceof RID)
       return (RID) obj;
+    if (obj instanceof String)
+      return new RID(database, (String) obj);
 
     if (obj instanceof Map) {
       @SuppressWarnings({ "unchecked", "rawtypes" })
@@ -78,4 +74,7 @@ public class ArcadeIoRegistry extends AbstractIoRegistry {
     return map.containsKey(BUCKET_ID) && map.containsKey(BUCKET_POSITION);
   }
 
+  public static ArcadeIoRegistry instance() {
+    return INSTANCE;
+  }
 }

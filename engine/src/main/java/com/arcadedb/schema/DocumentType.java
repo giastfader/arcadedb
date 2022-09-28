@@ -1,48 +1,55 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.schema;
 
 import com.arcadedb.database.Document;
+import com.arcadedb.database.RecordEvents;
+import com.arcadedb.database.RecordEventsRegistry;
 import com.arcadedb.database.bucketselectionstrategy.BucketSelectionStrategy;
-import com.arcadedb.database.bucketselectionstrategy.DefaultBucketSelectionStrategy;
+import com.arcadedb.database.bucketselectionstrategy.RoundRobinBucketSelectionStrategy;
 import com.arcadedb.engine.Bucket;
 import com.arcadedb.exception.SchemaException;
 import com.arcadedb.index.Index;
+import com.arcadedb.index.IndexException;
 import com.arcadedb.index.IndexInternal;
 import com.arcadedb.index.TypeIndex;
 import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
+import com.arcadedb.log.LogManager;
+import org.json.JSONObject;
 
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 public class DocumentType {
-  protected final EmbeddedSchema schema;
-  protected final String         name;
-  protected final List<DocumentType>                parentTypes             = new ArrayList<>();
-  protected final List<DocumentType>                subTypes                = new ArrayList<>();
-  protected final List<Bucket>                      buckets                 = new ArrayList<>();
-  protected       BucketSelectionStrategy           bucketSelectionStrategy = new DefaultBucketSelectionStrategy();
-  protected final Map<String, Property>             properties              = new HashMap<>();
-  protected       Map<Integer, List<IndexInternal>> bucketIndexesByBucket   = new HashMap<>();
-  protected       Map<List<String>, TypeIndex>      indexesByProperties     = new HashMap<>();
+  protected final EmbeddedSchema                    schema;
+  protected final String                            name;
+  protected final List<DocumentType>                superTypes                   = new ArrayList<>();
+  protected final List<DocumentType>                subTypes                     = new ArrayList<>();
+  protected final List<Bucket>                      buckets                      = new ArrayList<>();
+  protected       BucketSelectionStrategy           bucketSelectionStrategy      = new RoundRobinBucketSelectionStrategy();
+  protected final Map<String, Property>             properties                   = new HashMap<>();
+  protected       Map<Integer, List<IndexInternal>> bucketIndexesByBucket        = new HashMap<>();
+  protected       Map<List<String>, TypeIndex>      indexesByProperties          = new HashMap<>();
+  protected final RecordEventsRegistry              events                       = new RecordEventsRegistry();
+  protected final Map<String, Object>               custom                       = new HashMap<>();
+  protected       Set<String>                       propertiesWithDefaultDefined = Collections.emptySet();
 
   public DocumentType(final EmbeddedSchema schema, final String name) {
     this.schema = schema;
@@ -57,44 +64,122 @@ public class DocumentType {
     return Document.RECORD_TYPE;
   }
 
-  public DocumentType addParentType(final String parentName) {
-    return addParentType(schema.getType(parentName));
+  public RecordEvents getEvents() {
+    return events;
   }
 
-  public DocumentType addParentType(final DocumentType parent) {
-    if (parentTypes.indexOf(parent) > -1)
+  public Set<String> getPolymorphicPropertiesWithDefaultDefined() {
+    if (superTypes.isEmpty())
+      return propertiesWithDefaultDefined;
+
+    final HashSet<String> set = new HashSet<>(propertiesWithDefaultDefined);
+    for (DocumentType superType : superTypes)
+      set.addAll(superType.propertiesWithDefaultDefined);
+    return set;
+  }
+
+  public DocumentType addSuperType(final String superName) {
+    return addSuperType(schema.getType(superName));
+  }
+
+  public DocumentType addSuperType(final DocumentType superType) {
+    return addSuperType(superType, true);
+  }
+
+  protected DocumentType addSuperType(final DocumentType superType, final boolean createIndexes) {
+    if (superTypes.indexOf(superType) > -1)
       // ALREADY PARENT
       return this;
 
+    // CHECK FOR CONFLICT WITH PROPERTIES NAMES
     final Set<String> allProperties = getPolymorphicPropertyNames();
-    for (String p : parent.getPropertyNames())
-      if (allProperties.contains(p))
-        throw new IllegalArgumentException("Property '" + p + "' is already defined in type '" + name + "' or any parent types");
+    for (String p : superType.getPolymorphicPropertyNames())
+      if (allProperties.contains(p)) {
+        LogManager.instance().log(this, Level.WARNING, "Property '" + p + "' is already defined in type '" + name + "' or any super types");
+        //throw new IllegalArgumentException("Property '" + p + "' is already defined in type '" + name + "' or any super types");
+      }
 
-    parentTypes.add(parent);
-    parent.subTypes.add(this);
-    schema.saveConfiguration();
+    recordFileChanges(() -> {
+      superTypes.add(superType);
+      superType.subTypes.add(this);
+
+      // CREATE INDEXES AUTOMATICALLY ON PROPERTIES DEFINED IN SUPER TYPES
+      final Collection<TypeIndex> indexes = new ArrayList<>(getAllIndexes(true));
+      indexes.removeAll(indexesByProperties.values());
+
+      if (createIndexes) {
+        try {
+          schema.getDatabase().transaction(() -> {
+            for (TypeIndex index : indexes) {
+              if (index.getType() == null) {
+                LogManager.instance()
+                    .log(this, Level.WARNING, "Error on creating implicit indexes from super type '" + superType.getName() + "': key types is null");
+              } else {
+                for (int i = 0; i < buckets.size(); i++) {
+                  final Bucket bucket = buckets.get(i);
+                  schema.createBucketIndex(schema.getType(index.getTypeName()), index.getKeyTypes(), bucket, name, index.getType(), index.isUnique(),
+                      LSMTreeIndexAbstract.DEF_PAGE_SIZE, index.getNullStrategy(), null,
+                      index.getPropertyNames().toArray(new String[index.getPropertyNames().size()]));
+                }
+              }
+            }
+          }, false);
+        } catch (IndexException e) {
+          LogManager.instance().log(this, Level.WARNING, "Error on creating implicit indexes from super type '" + superType.getName() + "'", e);
+          throw e;
+        }
+      }
+
+      return null;
+    });
     return this;
   }
 
-  public void removeParentType(final String parentName) {
-    removeParentType(schema.getType(parentName));
+  /**
+   * Removes a super type (by its name) from the current type.
+   *
+   * @see #removeSuperType(DocumentType)
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
+  public void removeSuperType(final String superTypeName) {
+    removeSuperType(schema.getType(superTypeName));
   }
 
-  public void removeParentType(final DocumentType parent) {
-    if (!parentTypes.remove(parent))
-      // ALREADY REMOVED PARENT
-      return;
+  /**
+   * Removes a super type from the current type.
+   *
+   * @see #removeSuperType(String)
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
+  public void removeSuperType(final DocumentType superType) {
+    recordFileChanges(() -> {
+      if (!superTypes.remove(superType))
+        // ALREADY REMOVED SUPER TYPE
+        return null;
 
-    parent.subTypes.remove(this);
-    schema.saveConfiguration();
+      superType.subTypes.remove(this);
+      return null;
+    });
   }
 
+  /**
+   * Returns true if the current type is the same or a subtype of `type` parameter.
+   *
+   * @param type the type name to check
+   *
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
   public boolean instanceOf(final String type) {
     if (name.equals(type))
       return true;
 
-    for (DocumentType t : parentTypes) {
+    for (DocumentType t : superTypes) {
       if (t.instanceOf(type))
         return true;
     }
@@ -102,57 +187,175 @@ public class DocumentType {
     return false;
   }
 
-  public List<DocumentType> getParentTypes() {
-    return Collections.unmodifiableList(parentTypes);
+  /**
+   * Returns the list of super types if any, otherwise an empty collection.
+   *
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
+  public List<DocumentType> getSuperTypes() {
+    return Collections.unmodifiableList(superTypes);
   }
 
+  /**
+   * Set the type super types. Any previous configuration about supertypes will be replaced with this new list.
+   *
+   * @param newSuperTypes List of super types to assign
+   *
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
+  public void setSuperTypes(List<DocumentType> newSuperTypes) {
+    if (newSuperTypes == null)
+      newSuperTypes = Collections.emptyList();
+
+    final List<DocumentType> commonSuperTypes = new ArrayList<>(superTypes);
+    commonSuperTypes.retainAll(newSuperTypes);
+
+    final List<DocumentType> toRemove = new ArrayList<>(superTypes);
+    toRemove.removeAll(commonSuperTypes);
+    toRemove.forEach(this::removeSuperType);
+
+    final List<DocumentType> toAdd = new ArrayList<>(newSuperTypes);
+    toAdd.removeAll(commonSuperTypes);
+    toAdd.forEach(this::addSuperType);
+  }
+
+  /**
+   * Returns the list of subtypes, in any, or an empty list in case the type has not subtypes defined.
+   *
+   * @see #addSuperType(DocumentType)
+   * @see #addSuperType(String)
+   * @see #addSuperType(DocumentType, boolean)
+   */
   public List<DocumentType> getSubTypes() {
     return Collections.unmodifiableList(subTypes);
   }
 
+  /**
+   * Returns all the properties defined in the type, not considering the ones inherited from subtypes.
+   *
+   * @return Set containing all the names
+   *
+   * @see #getPolymorphicPropertyNames()
+   */
   public Set<String> getPropertyNames() {
     return properties.keySet();
   }
 
+  /**
+   * Returns all the properties defined in the type and subtypes.
+   *
+   * @return Set containing all the names
+   *
+   * @see #getPropertyNames()
+   */
   public Set<String> getPolymorphicPropertyNames() {
-    final Set<String> allProperties = new HashSet<>();
-    for (DocumentType p : parentTypes)
-      allProperties.addAll(p.getPropertyNames());
+    if (superTypes.isEmpty())
+      return getPropertyNames();
+
+    final Set<String> allProperties = new HashSet<>(getPropertyNames());
+    for (DocumentType p : superTypes)
+      allProperties.addAll(p.getPolymorphicPropertyNames());
     return allProperties;
   }
 
+  /**
+   * Creates a new property with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type by type name @{@link String}
+   */
   public Property createProperty(final String propertyName, final String propertyType) {
     return createProperty(propertyName, Type.getTypeByName(propertyType));
   }
 
+  /**
+   * Creates a new property with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type as Java @{@link Class}
+   */
   public Property createProperty(final String propertyName, final Class<?> propertyType) {
     return createProperty(propertyName, Type.getTypeByClass(propertyType));
   }
 
+  public Property createProperty(String propName, JSONObject prop) {
+    final Property p = createProperty(propName, (String) prop.get("type"));
+
+    if (prop.has("default"))
+      p.setDefaultValue(prop.get("default"));
+
+    if (prop.has("readonly"))
+      p.setReadonly(prop.getBoolean("readonly"));
+    if (prop.has("mandatory"))
+      p.setMandatory(prop.getBoolean("mandatory"));
+    if (prop.has("notNull"))
+      p.setNotNull(prop.getBoolean("notNull"));
+    if (prop.has("max"))
+      p.setMax(prop.getString("max"));
+    if (prop.has("min"))
+      p.setMin(prop.getString("min"));
+    if (prop.has("regexp"))
+      p.setRegexp(prop.getString("regexp"));
+
+    p.custom.clear();
+    if (prop.has("custom"))
+      p.custom.putAll(prop.getJSONObject("custom").toMap());
+
+    return p;
+  }
+
+  /**
+   * Creates a new property with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type as @{@link Type}
+   */
   public Property createProperty(final String propertyName, final Type propertyType) {
     if (properties.containsKey(propertyName))
       throw new SchemaException("Cannot create the property '" + propertyName + "' in type '" + name + "' because it already exists");
 
     if (getPolymorphicPropertyNames().contains(propertyName))
-      throw new SchemaException("Cannot create the property '" + propertyName + "' in type '" + name + "' because it was already defined in a parent type");
+      throw new SchemaException("Cannot create the property '" + propertyName + "' in type '" + name + "' because it was already defined in a super type");
 
     final Property property = new Property(this, propertyName, propertyType);
 
-    properties.put(propertyName, property);
-
-    schema.saveConfiguration();
-
+    recordFileChanges(() -> {
+      properties.put(propertyName, property);
+      return null;
+    });
     return property;
   }
 
+  /**
+   * Returns a property by its name. If the property does not exist, it is created with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type, by type name @{@link String}, to use in case the property does not exist and will be created
+   */
   public Property getOrCreateProperty(final String propertyName, final String propertyType) {
     return getOrCreateProperty(propertyName, Type.getTypeByName(propertyType));
   }
 
+  /**
+   * Returns a property by its name. If the property does not exist, it is created with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type, as Java @{@link Class}, to use in case the property does not exist and will be created
+   */
   public Property getOrCreateProperty(final String propertyName, final Class<?> propertyType) {
     return getOrCreateProperty(propertyName, Type.getTypeByClass(propertyType));
   }
 
+  /**
+   * Returns a property by its name. If the property does not exist, it is created with type `propertyType`.
+   *
+   * @param propertyName Property name to remove
+   * @param propertyType Property type, as @{@link Type}, to use in case the property does not exist and will be created
+   */
   public Property getOrCreateProperty(final String propertyName, final Type propertyType) {
     Property p = properties.get(propertyName);
     if (p != null) {
@@ -165,13 +368,25 @@ public class DocumentType {
     return createProperty(propertyName, propertyType);
   }
 
+  /**
+   * Drops a property from the type. If there is any index on the property a @{@link SchemaException} is thrown.
+   *
+   * @param propertyName Property name to remove
+   */
   public void dropProperty(final String propertyName) {
-    properties.remove(propertyName);
-    schema.saveConfiguration();
+    for (TypeIndex index : getAllIndexes(true)) {
+      if (index.getPropertyNames().contains(propertyName))
+        throw new SchemaException("Error on dropping property '" + propertyName + "' because used by index '" + index.getName() + "'");
+    }
+
+    recordFileChanges(() -> {
+      properties.remove(propertyName);
+      return null;
+    });
   }
 
   public Index createTypeIndex(final EmbeddedSchema.INDEX_TYPE indexType, final boolean unique, final String... propertyNames) {
-    return schema.createTypeIndex(indexType, unique, name, propertyNames);
+    return schema.createTypeIndex(indexType, unique, name, propertyNames, LSMTreeIndexAbstract.DEF_PAGE_SIZE, LSMTreeIndexAbstract.NULL_STRATEGY.SKIP, null);
   }
 
   public Index createTypeIndex(final EmbeddedSchema.INDEX_TYPE indexType, final boolean unique, String[] propertyNames, final int pageSize) {
@@ -217,14 +432,18 @@ public class DocumentType {
   }
 
   public DocumentType addBucket(final Bucket bucket) {
-    addBucketInternal(bucket);
-    schema.saveConfiguration();
+    recordFileChanges(() -> {
+      addBucketInternal(bucket);
+      return null;
+    });
     return this;
   }
 
   public DocumentType removeBucket(final Bucket bucket) {
-    addBucketInternal(bucket);
-    schema.saveConfiguration();
+    recordFileChanges(() -> {
+      removeBucketInternal(bucket);
+      return null;
+    });
     return this;
   }
 
@@ -262,8 +481,8 @@ public class DocumentType {
     if (prop != null)
       return prop;
 
-    for (DocumentType parent : parentTypes) {
-      prop = parent.getPolymorphicPropertyIfExists(propertyName);
+    for (DocumentType superType : superTypes) {
+      prop = superType.getPolymorphicPropertyIfExists(propertyName);
       if (prop != null)
         return prop;
     }
@@ -289,41 +508,66 @@ public class DocumentType {
     return prop;
   }
 
-  public List<Index> getAllIndexes(final boolean polymorphic) {
-    if (!polymorphic || parentTypes.isEmpty())
-      return new ArrayList<>(indexesByProperties.values());
+  public Collection<TypeIndex> getAllIndexes(final boolean polymorphic) {
+    if (!polymorphic || superTypes.isEmpty())
+      return Collections.unmodifiableCollection(indexesByProperties.values());
 
-    final List<Index> list = new ArrayList<>();
-    for (TypeIndex idx : indexesByProperties.values())
-      list.add(idx);
+    final List<TypeIndex> list = new ArrayList<>(indexesByProperties.values());
 
-    for (DocumentType t : parentTypes)
-      list.addAll(t.getAllIndexes(polymorphic));
+    if (polymorphic)
+      for (DocumentType t : superTypes)
+        list.addAll(t.getAllIndexes(true));
 
-    return list;
+    return Collections.unmodifiableCollection(list);
   }
 
   public List<Index> getPolymorphicBucketIndexByBucketId(final int bucketId) {
     final List<IndexInternal> r = bucketIndexesByBucket.get(bucketId);
-    if (r != null && parentTypes.isEmpty())
-      // MOST COMMON CASE, SAVE CREATING AND COPYING TO A NEW ARRAY
-      return Collections.unmodifiableList(r);
 
-    final List<Index> result = new ArrayList<>();
-    if (r != null)
-      result.addAll(r);
+    if (superTypes.isEmpty()) {
+      // MOST COMMON CASES, OPTIMIZATION AVOIDING CREATING NEW LISTS
+      if (r == null)
+        return Collections.emptyList();
+      else
+        // MOST COMMON CASE, SAVE CREATING AND COPYING TO A NEW ARRAY
+        return Collections.unmodifiableList(r);
+    }
 
-    for (DocumentType t : parentTypes)
+    final List<Index> result = r != null ? new ArrayList<>(r) : new ArrayList<>();
+    for (DocumentType t : superTypes)
       result.addAll(t.getPolymorphicBucketIndexByBucketId(bucketId));
 
     return result;
   }
 
+  public List<TypeIndex> getIndexesByProperties(final String property1, final String... propertiesN) {
+    final List<TypeIndex> result = new ArrayList<>();
+
+    final Set<String> properties = new HashSet<>(propertiesN.length + 1);
+    properties.add(property1);
+    Collections.addAll(properties, propertiesN);
+
+    for (Map.Entry<List<String>, TypeIndex> entry : indexesByProperties.entrySet()) {
+      for (String prop : entry.getKey()) {
+        if (properties.contains(prop)) {
+          result.add(entry.getValue());
+          break;
+        }
+      }
+    }
+
+    return result;
+  }
+
   public TypeIndex getPolymorphicIndexByProperties(final String... properties) {
-    TypeIndex idx = indexesByProperties.get(Arrays.asList(properties));
+    return getPolymorphicIndexByProperties(Arrays.asList(properties));
+  }
+
+  public TypeIndex getPolymorphicIndexByProperties(final List<String> properties) {
+    TypeIndex idx = indexesByProperties.get(properties);
 
     if (idx == null)
-      for (DocumentType t : parentTypes) {
+      for (DocumentType t : superTypes) {
         idx = t.getPolymorphicIndexByProperties(properties);
         if (idx != null)
           break;
@@ -351,14 +595,14 @@ public class DocumentType {
     if (!Objects.equals(name, that.name))
       return false;
 
-    if (parentTypes.size() != that.parentTypes.size())
+    if (superTypes.size() != that.superTypes.size())
       return false;
 
     final Set<String> set = new HashSet<>();
-    for (DocumentType t : parentTypes)
+    for (DocumentType t : superTypes)
       set.add(t.name);
 
-    for (DocumentType t : that.parentTypes)
+    for (DocumentType t : that.superTypes)
       set.remove(t.name);
 
     if (!set.isEmpty())
@@ -430,11 +674,11 @@ public class DocumentType {
           return false;
         if (!m1.getName().equals(m2.getName()))
           return false;
-        if (m1.getPropertyNames().length != m2.getPropertyNames().length)
+        if (m1.getPropertyNames().size() != m2.getPropertyNames().size())
           return false;
 
-        for (int p = 0; p < m1.getPropertyNames().length; ++p) {
-          if (!m1.getPropertyNames()[p].equals(m2.getPropertyNames()[p]))
+        for (int p = 0; p < m1.getPropertyNames().size(); ++p) {
+          if (!m1.getPropertyNames().get(p).equals(m2.getPropertyNames().get(p)))
             return false;
         }
       }
@@ -458,13 +702,12 @@ public class DocumentType {
   }
 
   @Override
-  public boolean equals(Object o) {
+  public boolean equals(final Object o) {
     if (this == o)
       return true;
     if (o == null || getClass() != o.getClass())
       return false;
-    DocumentType that = (DocumentType) o;
-
+    final DocumentType that = (DocumentType) o;
     return name.equals(that.name);
   }
 
@@ -498,7 +741,7 @@ public class DocumentType {
     this.bucketSelectionStrategy.setType(this);
   }
 
-  public void removeIndexInternal(final TypeIndex index) {
+  public void removeTypeIndexInternal(final TypeIndex index) {
     for (Iterator<TypeIndex> it = indexesByProperties.values().iterator(); it.hasNext(); ) {
       final TypeIndex idx = it.next();
       if (idx == index) {
@@ -507,14 +750,20 @@ public class DocumentType {
       }
     }
 
-    for (IndexInternal idx : index.getIndexesOnBuckets()) {
-      final List<IndexInternal> list = bucketIndexesByBucket.get(idx.getAssociatedBucketId());
-      if (list != null)
-        list.remove(idx);
-    }
+    for (IndexInternal idx : index.getIndexesOnBuckets())
+      removeBucketIndexInternal(idx);
 
-    for (DocumentType parent : parentTypes)
-      parent.removeIndexInternal(index);
+    for (DocumentType superType : superTypes)
+      superType.removeTypeIndexInternal(index);
+  }
+
+  public void removeBucketIndexInternal(final Index index) {
+    final List<IndexInternal> list = bucketIndexesByBucket.get(index.getAssociatedBucketId());
+    if (list != null) {
+      list.remove(index);
+      if (list.isEmpty())
+        bucketIndexesByBucket.remove(index.getAssociatedBucketId());
+    }
   }
 
   protected void addBucketInternal(final Bucket bucket) {
@@ -530,21 +779,18 @@ public class DocumentType {
   }
 
   protected void removeBucketInternal(final Bucket bucket) {
-    for (DocumentType cl : schema.getTypes()) {
-      if (!cl.hasBucket(bucket.getName()))
-        throw new SchemaException(
-            "Cannot remove the bucket '" + bucket.getName() + "' to the type '" + name + "', because the bucket is not associated to the type '" + cl.getName()
-                + "'");
-    }
+    if (!buckets.contains(bucket))
+      throw new SchemaException(
+          "Cannot remove the bucket '" + bucket.getName() + "' to the type '" + name + "', because the bucket is not associated to the type '" + getName()
+              + "'");
 
     buckets.remove(bucket);
   }
 
   protected Map<String, Property> getPolymorphicProperties() {
-    final Map<String, Property> allProperties = new HashMap<>();
-    allProperties.putAll(properties);
+    final Map<String, Property> allProperties = new HashMap<>(properties);
 
-    for (DocumentType p : parentTypes)
+    for (DocumentType p : superTypes)
       allProperties.putAll(p.getPolymorphicProperties());
 
     return allProperties;
@@ -567,10 +813,83 @@ public class DocumentType {
 
     if (type.equalsIgnoreCase(getName()))
       return true;
-    for (DocumentType parentType : parentTypes) {
-      if (parentType.isSubTypeOf(type))
+    for (DocumentType superType : superTypes) {
+      if (superType.isSubTypeOf(type))
         return true;
     }
     return false;
+  }
+
+  public boolean isSuperTypeOf(final String type) {
+    if (type == null)
+      return false;
+
+    if (type.equalsIgnoreCase(getName()))
+      return true;
+    for (DocumentType subType : subTypes) {
+      if (subType.isSuperTypeOf(type))
+        return true;
+    }
+    return false;
+  }
+
+  public Set<String> getCustomKeys() {
+    return Collections.unmodifiableSet(custom.keySet());
+  }
+
+  public Object getCustomValue(final String key) {
+    return custom.get(key);
+  }
+
+  public Object setCustomValue(final String key, final Object value) {
+    if (value == null)
+      return custom.remove(key);
+    return custom.put(key, value);
+  }
+
+  public JSONObject toJSON() {
+    final JSONObject type = new JSONObject();
+
+    final String kind;
+    if (this instanceof VertexType)
+      kind = "v";
+    else if (this instanceof EdgeType)
+      kind = "e";
+    else
+      kind = "d";
+    type.put("type", kind);
+
+    final String[] parents = new String[getSuperTypes().size()];
+    for (int i = 0; i < parents.length; ++i)
+      parents[i] = getSuperTypes().get(i).getName();
+    type.put("parents", parents);
+
+    final List<Bucket> originalBuckets = getBuckets(false);
+    final String[] buckets = new String[originalBuckets.size()];
+    for (int i = 0; i < buckets.length; ++i)
+      buckets[i] = originalBuckets.get(i).getName();
+
+    type.put("buckets", buckets);
+
+    final JSONObject properties = new JSONObject();
+    type.put("properties", properties);
+
+    for (String propName : getPropertyNames())
+      properties.put(propName, getProperty(propName).toJSON());
+
+    final JSONObject indexes = new JSONObject();
+    type.put("indexes", indexes);
+
+    for (TypeIndex i : getAllIndexes(false)) {
+      for (Index entry : i.getIndexesOnBuckets())
+        indexes.put(entry.getName(), entry.toJSON());
+    }
+
+    type.put("custom", new JSONObject(custom));
+    return type;
+  }
+
+  protected <RET> RET recordFileChanges(final Callable<Object> callback) {
+    return schema.recordFileChanges(callback);
   }
 }

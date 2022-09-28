@@ -1,31 +1,29 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseFactory;
+import com.arcadedb.exception.ArcadeDBException;
 
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Objects;
+import java.nio.*;
+import java.util.*;
 
 /**
  * Low level base page implementation of (default) 65536 bytes (2 exp 16 = 65Kb). The first 4 bytes (the header) are reserved to
@@ -53,6 +51,20 @@ public abstract class BasePage {
     this.version = version;
   }
 
+  /**
+   * Creates an immutable copy. The content is not copied (the same byte[] is used), because after invoking this method the original page is never modified.
+   */
+  public ImmutablePage createImmutableView() {
+    try {
+      return (ImmutablePage) content.executeInLock(
+          () -> new ImmutablePage(manager, pageId, getPhysicalSize(), content.getByteBuffer().array(), version, content.size()));
+    } catch (RuntimeException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new ArcadeDBException("Cannot create an immutable copy of page " + this, e);
+    }
+  }
+
   public MutablePage modify() {
     final byte[] array = this.content.getByteBuffer().array();
     // COPY THE CONTENT, SO CHANGES DOES NOT AFFECT IMMUTABLE COPY
@@ -64,7 +76,7 @@ public abstract class BasePage {
     content.size(content.getInt(PAGE_CONTENTSIZE_OFFSET));
   }
 
-  public void flushMetadata() {
+  public void updateMetadata() {
     content.putInt(PAGE_VERSION_OFFSET, version);
     content.putInt(PAGE_CONTENTSIZE_OFFSET, content.size());
   }
@@ -75,20 +87,6 @@ public abstract class BasePage {
 
   public int getMaxContentSize() {
     return getPhysicalSize() - PAGE_HEADER_SIZE;
-  }
-
-  /**
-   * Creates an immutable copy. The content is not copied (the same byte[] is used), because after invoking this method the original page is never modified.
-   */
-  public ImmutablePage createImmutableView() {
-    try {
-      return (ImmutablePage) content.executeInLock(
-          () -> new ImmutablePage(manager, pageId, getPhysicalSize(), content.getByteBuffer().array(), version, content.size()));
-    } catch (RuntimeException e) {
-      throw e;
-    } catch (Exception e) {
-      throw new RuntimeException("Cannot create an immutable copy of page " + this, e);
-    }
   }
 
   public int getAvailableContentSize() {
@@ -111,6 +109,11 @@ public abstract class BasePage {
     return version;
   }
 
+  /**
+   * Reads an unsigned number.
+   *
+   * @return An array of longs with the unsigned number in the 1st position and the occupied bytes on the 2nd position.
+   */
   public long[] readNumberAndSize(final int index) {
     return this.content.getNumberAndSize(PAGE_HEADER_SIZE + index);
   }
@@ -160,11 +163,11 @@ public abstract class BasePage {
   }
 
   public String readString() {
-    return new String(readBytes());
+    return new String(readBytes(), DatabaseFactory.getDefaultCharset());
   }
 
   public String readString(final int index) {
-    return new String(readBytes(PAGE_HEADER_SIZE + index));
+    return new String(readBytes(PAGE_HEADER_SIZE + index), DatabaseFactory.getDefaultCharset());
   }
 
   /**

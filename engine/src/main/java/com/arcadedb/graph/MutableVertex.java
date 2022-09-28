@@ -1,28 +1,33 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.graph;
 
-import com.arcadedb.database.*;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.Identifiable;
+import com.arcadedb.database.MutableDocument;
+import com.arcadedb.database.RID;
+import com.arcadedb.database.Transaction;
 import com.arcadedb.schema.DocumentType;
+import org.json.JSONObject;
+
+import java.util.*;
 
 /**
  * Mutable vertex that supports updates. After any changes, call the method {@link #save()} to mark the record as dirty in the current transaction, so the
@@ -61,25 +66,38 @@ public class MutableVertex extends MutableDocument implements VertexInternal {
   }
 
   @Override
-  public void reload() {
+  public synchronized void reload() {
     super.reload();
     init();
   }
 
   @Override
-  public MutableVertex set(final String name, final Object value) {
-    super.set(name, value);
-    return this;
+  public synchronized MutableVertex fromMap(Map<String, Object> map) {
+    return (MutableVertex) super.fromMap(map);
   }
 
   @Override
-  public void setBuffer(final Binary buffer) {
+  public synchronized MutableVertex fromJSON(JSONObject json) {
+    return (MutableVertex) super.fromJSON(json);
+  }
+
+  @Override
+  public MutableVertex set(final String name, final Object value) {
+    return (MutableVertex) super.set(name, value);
+  }
+
+  public synchronized MutableVertex set(final Object... properties) {
+    return (MutableVertex) super.set(properties);
+  }
+
+  @Override
+  public synchronized void setBuffer(final Binary buffer) {
     super.setBuffer(buffer);
     init();
   }
 
   @Override
-  public MutableVertex modify() {
+  public synchronized MutableVertex modify() {
     return this;
   }
 
@@ -157,6 +175,18 @@ public class MutableVertex extends MutableDocument implements VertexInternal {
   @Override
   public Vertex asVertex(final boolean loadContent) {
     return this;
+  }
+
+  @Override
+  public synchronized Map<String, Object> toMap() {
+    final Map<String, Object> map = super.toMap();
+    map.put("@cat", "v");
+    return map;
+  }
+
+  @Override
+  public synchronized JSONObject toJSON() {
+    return super.toJSON().put("@cat", "v");
   }
 
   private void init() {

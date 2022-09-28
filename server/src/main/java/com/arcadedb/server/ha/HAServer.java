@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.ContextConfiguration;
@@ -33,6 +30,7 @@ import com.arcadedb.network.binary.ChannelBinaryClient;
 import com.arcadedb.network.binary.ConnectionException;
 import com.arcadedb.network.binary.QuorumNotReachedException;
 import com.arcadedb.network.binary.ServerIsNotTheLeaderException;
+import com.arcadedb.query.sql.executor.InternalResultSet;
 import com.arcadedb.query.sql.executor.ResultInternal;
 import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.ServerPlugin;
@@ -48,16 +46,12 @@ import com.arcadedb.utility.RecordTableFormatter;
 import com.arcadedb.utility.TableFormatter;
 import io.undertow.server.handlers.PathHandler;
 
-import java.io.IOException;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
+import java.io.*;
+import java.net.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 // TODO: REFACTOR LEADER/REPLICA IN 2 USERTYPEES
 public class HAServer implements ServerPlugin {
@@ -83,27 +77,28 @@ public class HAServer implements ServerPlugin {
   protected        ReplicationLogFile                         replicationLogFile;
   private volatile Replica2LeaderNetworkExecutor              leaderConnection;
   private          LeaderNetworkListener                      listener;
-  private          Map<Long, QuorumMessage>                   messagesWaitingForQuorum          = new ConcurrentHashMap<>(1024);
-  private          Map<Long, ForwardedMessage>                forwardMessagesWaitingForResponse = new ConcurrentHashMap<>(1024);
+  private final    Map<Long, QuorumMessage>                   messagesWaitingForQuorum          = new ConcurrentHashMap<>(1024);
+  private final    Map<Long, ForwardedMessage>                forwardMessagesWaitingForResponse = new ConcurrentHashMap<>(1024);
   private          long                                       lastConfigurationOutputHash       = 0;
   private final    Object                                     sendingLock                       = new Object();
   private          String                                     serverAddress;
-  private          Set<String>                                serverAddressList                 = new HashSet<>();
+  private final    Set<String>                                serverAddressList                 = new HashSet<>();
   private          String                                     replicasHTTPAddresses;
   protected        Pair<Long, String>                         lastElectionVote;
   private volatile ELECTION_STATUS                            electionStatus                    = ELECTION_STATUS.DONE;
   private          boolean                                    started;
 
-  private class QuorumMessage {
+  private static class QuorumMessage {
     public final long           sentOn = System.currentTimeMillis();
     public final CountDownLatch semaphore;
+    public       List<Object>   payloads;
 
     public QuorumMessage(final CountDownLatch quorumSemaphore) {
       this.semaphore = quorumSemaphore;
     }
   }
 
-  private class ForwardedMessage {
+  private static class ForwardedMessage {
     public final CountDownLatch semaphore;
     public       ErrorResponse  error;
     public       Object         result;
@@ -113,17 +108,17 @@ public class HAServer implements ServerPlugin {
     }
   }
 
-  private class RemovedServerInfo {
-    String serverName;
-    long   joinedOn;
-    long   leftOn;
-
-    public RemovedServerInfo(final String remoteServerName, final long joinedOn) {
-      this.serverName = remoteServerName;
-      this.joinedOn = joinedOn;
-      this.leftOn = System.currentTimeMillis();
-    }
-  }
+//  private static class RemovedServerInfo {
+//    String serverName;
+//    long   joinedOn;
+//    long   leftOn;
+//
+//    public RemovedServerInfo(final String remoteServerName, final long joinedOn) {
+//      this.serverName = remoteServerName;
+//      this.joinedOn = joinedOn;
+//      this.leftOn = System.currentTimeMillis();
+//    }
+//  }
 
   public HAServer(final ArcadeDBServer server, final ContextConfiguration configuration) {
     if (!configuration.getValueAsBoolean(GlobalConfiguration.TX_WAL))
@@ -150,14 +145,14 @@ public class HAServer implements ServerPlugin {
 
     final String fileName = replicationPath + "/replication_" + server.getServerName() + ".rlog";
     try {
-      replicationLogFile = new ReplicationLogFile(fileName, this.getServer());
+      replicationLogFile = new ReplicationLogFile(fileName);
       final ReplicationMessage lastMessage = replicationLogFile.getLastMessage();
       if (lastMessage != null) {
         lastDistributedOperationNumber.set(lastMessage.messageNumber);
-        server.log(this, Level.FINE, "Found an existent replication log. Starting messages from %d", lastMessage.messageNumber);
+        LogManager.instance().log(this, Level.FINE, "Found an existent replication log. Starting messages from %d", lastMessage.messageNumber);
       }
     } catch (IOException e) {
-      server.log(this, Level.SEVERE, "Error on creating replication file '%s' for remote server '%s'", fileName, server.getServerName());
+      LogManager.instance().log(this, Level.SEVERE, "Error on creating replication file '%s' for remote server '%s'", fileName, server.getServerName());
       stopService();
       throw new ReplicationLogException("Error on creating replication file '" + fileName + "'", e);
     }
@@ -168,11 +163,11 @@ public class HAServer implements ServerPlugin {
 
     serverAddress = listener.getHost();
     if (serverAddress.equals("0.0.0.0")) {
-      try {
-        serverAddress = InetAddress.getLocalHost().getHostAddress();
-      } catch (UnknownHostException e) {
-        // IGNORE IT
-      }
+//      try {
+        serverAddress = "localhost";//InetAddress.getLocalHost().getHostAddress();
+//      } catch (UnknownHostException e) {
+//        // IGNORE IT
+//      }
     }
 
     if (GlobalConfiguration.HA_K8S.getValueAsBoolean()) {
@@ -194,11 +189,10 @@ public class HAServer implements ServerPlugin {
 
       configuredServers = serverEntries.length;
 
-      server.log(this, Level.FINE, "Connecting to servers %s (cluster=%s configuredServers=%d)", cfgServerList, bucketName, configuredServers);
+      LogManager.instance().log(this, Level.FINE, "Connecting to servers %s (cluster=%s configuredServers=%d)", cfgServerList, bucketName, configuredServers);
 
       serverAddressList.clear();
-      for (String serverEntry : serverEntries)
-        serverAddressList.add(serverEntry);
+      serverAddressList.addAll(Arrays.asList(serverEntries));
 
       for (String serverEntry : serverEntries) {
         if (!isCurrentServer(serverEntry) && connectToLeader(serverEntry)) {
@@ -209,16 +203,11 @@ public class HAServer implements ServerPlugin {
 
     if (leaderConnection == null) {
       final int majorityOfVotes = (configuredServers / 2) + 1;
-      server.log(this, Level.INFO, "Unable to find any Leader, start election (cluster=%s configuredServers=%d majorityOfVotes=%d)", bucketName,
+      LogManager.instance().log(this, Level.INFO, "Unable to find any Leader, start election (cluster=%s configuredServers=%d majorityOfVotes=%d)", bucketName,
           configuredServers, majorityOfVotes);
 
       // START ELECTION IN BACKGROUND
-      new Thread(new Runnable() {
-        @Override
-        public void run() {
-          startElection();
-        }
-      }).start();
+      new Thread(this::startElection).start();
     }
   }
 
@@ -242,6 +231,7 @@ public class HAServer implements ServerPlugin {
         return true;
 
     } catch (UnknownHostException e) {
+      // IGNORE THIS EXCEPTION AND RETURN FALSE
     }
     return false;
   }
@@ -296,7 +286,7 @@ public class HAServer implements ServerPlugin {
 
       lastElectionVote = new Pair<>(electionTurn, getServerName());
 
-      server.log(this, Level.INFO,
+      LogManager.instance().log(this, Level.INFO,
           "Starting election of local server asking for votes from %s (turn=%d retry=%d lastReplicationMessage=%d configuredServers=%d majorityOfVotes=%d)",
           serverAddressList, electionTurn, retry, lastReplicationMessage, configuredServers, majorityOfVotes);
 
@@ -325,7 +315,7 @@ public class HAServer implements ServerPlugin {
           if (vote == 0) {
             // RECEIVED VOTE
             ++totalVotes;
-            server.log(this, Level.INFO, "Received the vote from server %s (turn=%d totalVotes=%d majority=%d)", serverAddress, electionTurn, totalVotes,
+            LogManager.instance().log(this, Level.INFO, "Received the vote from server %s (turn=%d totalVotes=%d majority=%d)", serverAddress, electionTurn, totalVotes,
                 majorityOfVotes);
 
           } else {
@@ -338,20 +328,20 @@ public class HAServer implements ServerPlugin {
 
             if (vote == 1) {
               // NO VOTE, IT ALREADY VOTED FOR SOMEBODY ELSE
-              server.log(this, Level.INFO, "Did not receive the vote from server %s (turn=%d totalVotes=%d majority=%d itsLeader=%s)", serverAddress,
+              LogManager.instance().log(this, Level.INFO, "Did not receive the vote from server %s (turn=%d totalVotes=%d majority=%d itsLeader=%s)", serverAddress,
                   electionTurn, totalVotes, majorityOfVotes, otherLeaderName);
 
             } else if (vote == 2) {
               // NO VOTE, THE OTHER NODE HAS A HIGHER LSN, IT WILL START THE ELECTION
               electionAborted = true;
-              server.log(this, Level.INFO, "Aborting election because server %s has a higher LSN (turn=%d lastReplicationMessage=%d totalVotes=%d majority=%d)",
+              LogManager.instance().log(this, Level.INFO, "Aborting election because server %s has a higher LSN (turn=%d lastReplicationMessage=%d totalVotes=%d majority=%d)",
                   serverAddress, electionTurn, lastReplicationMessage, totalVotes, majorityOfVotes);
             }
           }
 
           channel.close();
         } catch (Exception e) {
-          server.log(this, Level.INFO, "Error contacting server %s for election", serverAddress);
+          LogManager.instance().log(this, Level.INFO, "Error contacting server %s for election", serverAddress);
         }
       }
 
@@ -359,7 +349,7 @@ public class HAServer implements ServerPlugin {
         break;
 
       if (!electionAborted && totalVotes >= majorityOfVotes) {
-        server.log(this, Level.INFO, "Current server elected as new $ANSI{green Leader} (turn=%d totalVotes=%d majority=%d)", electionTurn, totalVotes,
+        LogManager.instance().log(this, Level.INFO, "Current server elected as new $ANSI{green Leader} (turn=%d totalVotes=%d majority=%d)", electionTurn, totalVotes,
             majorityOfVotes);
         sendNewLeadershipToOtherNodes();
         break;
@@ -367,10 +357,10 @@ public class HAServer implements ServerPlugin {
 
       if (!otherLeaders.isEmpty()) {
         // TRY TO CONNECT TO THE EXISTENT LEADER
-        server.log(this, Level.INFO, "Other leaders found %s (turn=%d totalVotes=%d majority=%d)", otherLeaders, electionTurn, totalVotes, majorityOfVotes);
+        LogManager.instance().log(this, Level.INFO, "Other leaders found %s (turn=%d totalVotes=%d majority=%d)", otherLeaders, electionTurn, totalVotes, majorityOfVotes);
         for (Map.Entry<String, Integer> entry : otherLeaders.entrySet()) {
           if (entry.getValue() >= majorityOfVotes) {
-            server.log(this, Level.INFO, "Trying to connect to the existing leader '%s' (turn=%d totalVotes=%d majority=%d)", entry.getKey(), electionTurn,
+            LogManager.instance().log(this, Level.INFO, "Trying to connect to the existing leader '%s' (turn=%d totalVotes=%d majority=%d)", entry.getKey(), electionTurn,
                 entry.getValue(), majorityOfVotes);
             if (!isCurrentServer(entry.getKey()) && connectToLeader(entry.getKey()))
               break;
@@ -386,7 +376,7 @@ public class HAServer implements ServerPlugin {
         if (electionAborted)
           timeout *= 3;
 
-        server.log(this, Level.INFO, "Not able to be elected as Leader, waiting %dms and retry (turn=%d totalVotes=%d majority=%d)", timeout, electionTurn,
+        LogManager.instance().log(this, Level.INFO, "Not able to be elected as Leader, waiting %dms and retry (turn=%d totalVotes=%d majority=%d)", timeout, electionTurn,
             totalVotes, majorityOfVotes);
         Thread.sleep(timeout);
 
@@ -407,7 +397,7 @@ public class HAServer implements ServerPlugin {
     final Replica2LeaderNetworkExecutor lc = leaderConnection;
     if (lc != null) {
       // I AM A REPLICA, NO LEADER ELECTION IS NEEDED
-      server.log(this, Level.INFO, "Abort election process, a Leader (%s) has been already found (turn=%d)", lc.getRemoteServerName(), electionTurn);
+      LogManager.instance().log(this, Level.INFO, "Abort election process, a Leader (%s) has been already found (turn=%d)", lc.getRemoteServerName(), electionTurn);
       return true;
     }
     return false;
@@ -418,7 +408,7 @@ public class HAServer implements ServerPlugin {
 
     setElectionStatus(ELECTION_STATUS.LEADER_WAITING_FOR_QUORUM);
 
-    server.log(this, Level.INFO, "Contacting all the servers for the new leadership (turn=%d)...", lastElectionVote.getFirst());
+    LogManager.instance().log(this, Level.INFO, "Contacting all the servers for the new leadership (turn=%d)...", lastElectionVote.getFirst());
 
     for (String serverAddress : serverAddressList) {
       if (isCurrentServer(serverAddress))
@@ -428,14 +418,14 @@ public class HAServer implements ServerPlugin {
       try {
         final String[] parts = serverAddress.split(":");
 
-        server.log(this, Level.INFO, "- Sending new Leader to server '%s'...", serverAddress);
+        LogManager.instance().log(this, Level.INFO, "- Sending new Leader to server '%s'...", serverAddress);
 
         final ChannelBinaryClient channel = createNetworkConnection(parts[0], Integer.parseInt(parts[1]), ReplicationProtocol.COMMAND_ELECTION_COMPLETED);
         channel.writeLong(lastElectionVote.getFirst());
         channel.flush();
 
       } catch (Exception e) {
-        server.log(this, Level.INFO, "Error contacting server %s for election", serverAddress);
+        LogManager.instance().log(this, Level.INFO, "Error contacting server %s for election", serverAddress);
       }
     }
   }
@@ -447,7 +437,7 @@ public class HAServer implements ServerPlugin {
   public void setReplicaStatus(final String remoteServerName, final boolean online) {
     final Leader2ReplicaNetworkExecutor c = replicaConnections.get(remoteServerName);
     if (c == null) {
-      server.log(this, Level.SEVERE, "Replica '%s' was not registered", remoteServerName);
+      LogManager.instance().log(this, Level.SEVERE, "Replica '%s' was not registered", remoteServerName);
       return;
     }
 
@@ -460,13 +450,21 @@ public class HAServer implements ServerPlugin {
     }
   }
 
-  public void receivedResponse(final String remoteServerName, final long messageNumber) {
+  public void receivedResponse(final String remoteServerName, final long messageNumber, final Object payload) {
     final long receivedOn = System.currentTimeMillis();
 
     final QuorumMessage msg = messagesWaitingForQuorum.get(messageNumber);
     if (msg == null)
       // QUORUM ALREADY REACHED OR TIMEOUT
       return;
+
+    if (payload != null) {
+      synchronized (msg) {
+        if (msg.payloads == null)
+          msg.payloads = new ArrayList<>();
+        msg.payloads.add(payload);
+      }
+    }
 
     msg.semaphore.countDown();
 
@@ -482,7 +480,7 @@ public class HAServer implements ServerPlugin {
       // QUORUM ALREADY REACHED OR TIMEOUT
       return;
 
-    server.log(this, Level.FINE, "Forwarded message %d has been executed", messageNumber);
+    LogManager.instance().log(this, Level.FINE, "Forwarded message %d has been executed", messageNumber);
 
     msg.result = result;
     msg.error = error;
@@ -545,7 +543,7 @@ public class HAServer implements ServerPlugin {
   }
 
   protected void setElectionStatus(final ELECTION_STATUS status) {
-    server.log(this, Level.INFO, "Change election status from %s to %s", this.electionStatus, status);
+    LogManager.instance().log(this, Level.INFO, "Change election status from %s to %s", this.electionStatus, status);
     this.electionStatus = status;
   }
 
@@ -558,14 +556,22 @@ public class HAServer implements ServerPlugin {
       serverAddressList.clear();
 
       final String[] servers = serverAddress.split(",");
-      for (String s : servers)
-        serverAddressList.add(s);
+      serverAddressList.addAll(Arrays.asList(servers));
 
       this.configuredServers = serverAddressList.size();
     } else
       this.configuredServers = 1;
   }
 
+  /**
+   * Forward a command to the leader server. This occurs with transactions and DDL commands. If the timeout is 0, then the request is asynchronous and the
+   * response is a Resultset containing `{"operation", "forwarded to the leader"}`
+   *
+   * @param command HACommand to forward
+   * @param timeout Timeout in milliseconds. 0 for asynchronous commands
+   *
+   * @return the result from the command if synchronous, otherwise a result set containing `{"operation", "forwarded to the leader"}`
+   */
   public Object forwardCommandToLeader(final HACommand command, final long timeout) {
     final Binary buffer = new Binary();
 
@@ -573,49 +579,50 @@ public class HAServer implements ServerPlugin {
 
     final long opNumber = this.lastForwardOperationNumber.decrementAndGet();
 
-    server.log(this, Level.FINE, "Forwarding request %d (%s) to Leader server '%s'", opNumber, command, leaderName);
+    LogManager.instance().log(this, Level.FINE, "Forwarding request %d (%s) to Leader server '%s'", opNumber, command, leaderName);
 
     // REGISTER THE REQUEST TO WAIT FOR
     final ForwardedMessage forwardedMessage = new ForwardedMessage();
 
-    forwardMessagesWaitingForResponse.put(opNumber, forwardedMessage);
-
     if (leaderConnection == null)
       throw new ReplicationException("Leader not available");
 
+    forwardMessagesWaitingForResponse.put(opNumber, forwardedMessage);
     try {
       leaderConnection.sendCommandToLeader(buffer, command, opNumber);
+      if (timeout > 0) {
+        try {
+          if (forwardedMessage.semaphore.await(timeout, TimeUnit.MILLISECONDS)) {
 
-      try {
-        if (forwardedMessage.semaphore.await(timeout, TimeUnit.MILLISECONDS)) {
+            if (forwardedMessage.error != null) {
+              // EXCEPTION
+              if (forwardedMessage.error.exceptionClass.equals(ConcurrentModificationException.class.getName()))
+                throw new ConcurrentModificationException(forwardedMessage.error.exceptionMessage);
+              else if (forwardedMessage.error.exceptionClass.equals(TransactionException.class.getName()))
+                throw new TransactionException(forwardedMessage.error.exceptionMessage);
+              else if (forwardedMessage.error.exceptionClass.equals(QuorumNotReachedException.class.getName()))
+                throw new QuorumNotReachedException(forwardedMessage.error.exceptionMessage);
 
-          if (forwardedMessage.error != null) {
-            // EXCEPTION
-            if (forwardedMessage.error.exceptionClass.equals(ConcurrentModificationException.class.getName()))
-              throw new ConcurrentModificationException(forwardedMessage.error.exceptionMessage);
-            else if (forwardedMessage.error.exceptionClass.equals(TransactionException.class.getName()))
-              throw new TransactionException(forwardedMessage.error.exceptionMessage);
-            else if (forwardedMessage.error.exceptionClass.equals(QuorumNotReachedException.class.getName()))
-              throw new QuorumNotReachedException(forwardedMessage.error.exceptionMessage);
+              LogManager.instance().log(this, Level.WARNING, "Unexpected error received from forwarding a transaction to the Leader");
+              throw new ReplicationException("Unexpected error received from forwarding a transaction to the Leader");
+            }
 
-            server.log(this, Level.WARNING, "Unexpected error received from forwarding a transaction to the Leader");
-            throw new ReplicationException("Unexpected error received from forwarding a transaction to the Leader");
+          } else {
+            throw new TimeoutException("Error on forwarding transaction to the Leader server");
           }
 
-        } else {
-          throw new TimeoutException("Error on forwarding transaction to the Leader server");
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new ReplicationException("No response received from the Leader for request " + opNumber + " because the thread was interrupted");
         }
-
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new ReplicationException("No response received from the Leader for request " + opNumber + " because the thread was interrupted");
-      } finally {
-        forwardMessagesWaitingForResponse.remove(opNumber);
-      }
+      } else
+        forwardedMessage.result = new InternalResultSet(new ResultInternal(Map.of("operation", "forwarded to the leader")));
 
     } catch (IOException | TimeoutException e) {
-      server.log(this, Level.SEVERE, "Leader server '%s' does not respond, starting election...", leaderName);
+      LogManager.instance().log(this, Level.SEVERE, "Leader server '%s' does not respond, starting election...", leaderName);
       startElection();
+    } finally {
+      forwardMessagesWaitingForResponse.remove(opNumber);
     }
 
     return forwardedMessage.result;
@@ -633,7 +640,7 @@ public class HAServer implements ServerPlugin {
     synchronized (sendingLock) {
       messageFactory.serializeCommand(command, buffer, -1);
 
-      server.log(this, Level.FINE, "Sending request (%s) to %s", -1, command, replicas);
+      LogManager.instance().log(this, Level.FINE, "Sending request (%s) to %s", -1, command, replicas);
 
       for (Leader2ReplicaNetworkExecutor replicaConnection : replicas) {
         // STARTING FROM THE SECOND SERVER, COPY THE BUFFER
@@ -641,14 +648,14 @@ public class HAServer implements ServerPlugin {
           replicaConnection.enqueueMessage(buffer.slice(0));
         } catch (ReplicationException e) {
           // REMOVE THE REPLICA
-          server.log(this, Level.SEVERE, "Replica '%s' does not respond, setting it as OFFLINE", replicaConnection.getRemoteServerName());
+          LogManager.instance().log(this, Level.SEVERE, "Replica '%s' does not respond, setting it as OFFLINE", replicaConnection.getRemoteServerName());
           setReplicaStatus(replicaConnection.getRemoteServerName(), false);
         }
       }
     }
   }
 
-  public long sendCommandToReplicasWithQuorum(final HACommand command, final int quorum, final long timeout) {
+  public List<Object> sendCommandToReplicasWithQuorum(final HACommand command, final int quorum, final long timeout) {
     checkCurrentNodeIsTheLeader();
 
     if (quorum > 1 + getOnlineReplicas()) {
@@ -659,8 +666,8 @@ public class HAServer implements ServerPlugin {
     final Binary buffer = new Binary();
 
     long opNumber = -1;
-
-    CountDownLatch quorumSemaphore = null;
+    QuorumMessage quorumMessage = null;
+    List<Object> responsePayloads = null;
 
     try {
       while (true) {
@@ -675,15 +682,15 @@ public class HAServer implements ServerPlugin {
           messageFactory.serializeCommand(command, buffer, opNumber);
 
           if (quorum > 1) {
-            quorumSemaphore = new CountDownLatch(quorum - 1);
             // REGISTER THE REQUEST TO WAIT FOR THE QUORUM
-            messagesWaitingForQuorum.put(opNumber, new QuorumMessage(quorumSemaphore));
+            quorumMessage = new QuorumMessage(new CountDownLatch(quorum - 1));
+            messagesWaitingForQuorum.put(opNumber, quorumMessage);
           }
 
           // SEND THE REQUEST TO ALL THE REPLICAS
           final List<Leader2ReplicaNetworkExecutor> replicas = new ArrayList<>(replicaConnections.values());
 
-          server.log(this, Level.FINE, "Sending request %d '%s' to %s (quorum=%d)", opNumber, command, replicas, quorum);
+          LogManager.instance().log(this, Level.FINE, "Sending request %d '%s' to %s (quorum=%d)", opNumber, command, replicas, quorum);
 
           for (Leader2ReplicaNetworkExecutor replicaConnection : replicas) {
             try {
@@ -691,30 +698,30 @@ public class HAServer implements ServerPlugin {
               if (replicaConnection.enqueueMessage(buffer.slice(0)))
                 ++sent;
               else {
-                if (quorumSemaphore != null)
-                  quorumSemaphore.countDown();
+                if (quorumMessage != null)
+                  quorumMessage.semaphore.countDown();
               }
 
             } catch (ReplicationException e) {
-              server.log(this, Level.SEVERE, "Error on replicating message %d to replica '%s' (error=%s)", opNumber, replicaConnection.getRemoteServerName(),
+              LogManager.instance().log(this, Level.SEVERE, "Error on replicating message %d to replica '%s' (error=%s)", opNumber, replicaConnection.getRemoteServerName(),
                   e);
 
               // REMOVE THE REPLICA AND EXCLUDE IT FROM THE QUORUM
-              if (quorumSemaphore != null)
-                quorumSemaphore.countDown();
+              if (quorumMessage != null)
+                quorumMessage.semaphore.countDown();
             }
           }
         }
 
         if (sent < quorum - 1) {
           checkCurrentNodeIsTheLeader();
-          server.log(this, Level.WARNING, "Quorum " + quorum + " not reached because only " + (sent + 1) + " server(s) are online");
+          LogManager.instance().log(this, Level.WARNING, "Quorum " + quorum + " not reached because only " + (sent + 1) + " server(s) are online");
           throw new QuorumNotReachedException("Quorum " + quorum + " not reached because only " + (sent + 1) + " server(s) are online");
         }
 
-        if (quorumSemaphore != null) {
+        if (quorumMessage != null) {
           try {
-            if (!quorumSemaphore.await(timeout, TimeUnit.MILLISECONDS)) {
+            if (!quorumMessage.semaphore.await(timeout, TimeUnit.MILLISECONDS)) {
 
               checkCurrentNodeIsTheLeader();
 
@@ -724,8 +731,8 @@ public class HAServer implements ServerPlugin {
 
               checkCurrentNodeIsTheLeader();
 
-              server.log(this, Level.WARNING, "Timeout waiting for quorum to be reached for request " + opNumber);
-              throw new QuorumNotReachedException("Timeout waiting for quorum to be reached for request " + opNumber);
+              LogManager.instance().log(this, Level.WARNING, "Timeout waiting for quorum (%d) to be reached for request %d", quorum, opNumber);
+              throw new QuorumNotReachedException("Timeout waiting for quorum (" + quorum + ") to be reached for request " + opNumber);
             }
 
           } catch (InterruptedException e) {
@@ -743,11 +750,13 @@ public class HAServer implements ServerPlugin {
       }
     } finally {
       // REQUEST IS OVER, REMOVE FROM THE QUORUM MAP
-      if (quorumSemaphore != null)
+      if (quorumMessage != null) {
+        responsePayloads = quorumMessage.payloads;
         messagesWaitingForQuorum.remove(opNumber);
+      }
     }
 
-    return opNumber;
+    return responsePayloads;
   }
 
   public void setReplicasHTTPAddresses(final String replicasHTTPAddresses) {
@@ -756,13 +765,13 @@ public class HAServer implements ServerPlugin {
 
   public String getReplicaServersHTTPAddressesList() {
     if (isLeader()) {
-      String list = "";
+      final StringBuilder list = new StringBuilder();
       for (Leader2ReplicaNetworkExecutor r : replicaConnections.values()) {
-        if (!list.isEmpty())
-          list += ",";
-        list += r.getRemoteServerHTTPAddress();
+        if (list.length() > 0)
+          list.append(",");
+        list.append(r.getRemoteServerHTTPAddress());
       }
-      return list;
+      return list.toString();
     }
 
     return replicasHTTPAddresses;
@@ -771,8 +780,8 @@ public class HAServer implements ServerPlugin {
   public void removeServer(final String remoteServerName) {
     final Leader2ReplicaNetworkExecutor c = replicaConnections.remove(remoteServerName);
     if (c != null) {
-      final RemovedServerInfo removedServer = new RemovedServerInfo(remoteServerName, c.getJoinedOn());
-      server.log(this, Level.SEVERE, "Replica '%s' seems not active, removing it from the cluster", remoteServerName);
+      //final RemovedServerInfo removedServer = new RemovedServerInfo(remoteServerName, c.getJoinedOn());
+      LogManager.instance().log(this, Level.SEVERE, "Replica '%s' seems not active, removing it from the cluster", remoteServerName);
       c.close();
     }
 
@@ -812,12 +821,7 @@ public class HAServer implements ServerPlugin {
 
   public void printClusterConfiguration() {
     final StringBuilder buffer = new StringBuilder("NEW CLUSTER CONFIGURATION\n");
-    final TableFormatter table = new TableFormatter(new TableFormatter.TableOutput() {
-      @Override
-      public void onMessage(final String text, final Object... args) {
-        buffer.append(String.format(text, args));
-      }
-    });
+    final TableFormatter table = new TableFormatter((text, args) -> buffer.append(String.format(text, args)));
 
     final List<RecordTableFormatter.TableRecordRow> list = new ArrayList<>();
 
@@ -863,7 +867,7 @@ public class HAServer implements ServerPlugin {
 
     lastConfigurationOutputHash = hash;
 
-    server.log(this, Level.INFO, output + "\n");
+    LogManager.instance().log(this, Level.INFO, output + "\n");
   }
 
   public String getServerAddress() {
@@ -899,7 +903,7 @@ public class HAServer implements ServerPlugin {
 
         // STARTING FROM THE SECOND SERVER, COPY THE BUFFER
         try {
-          server.log(this, Level.FINE, "Resending message (%s) to replica '%s'...", entry.getFirst(), replica.getRemoteServerName());
+          LogManager.instance().log(this, Level.FINE, "Resending message (%s) to replica '%s'...", entry.getFirst(), replica.getRemoteServerName());
 
           if (min == -1)
             min = entry.getFirst().messageNumber;
@@ -913,14 +917,14 @@ public class HAServer implements ServerPlugin {
 
         } catch (Exception e) {
           // REMOVE THE REPLICA
-          server.log(this, Level.SEVERE, "Replica '%s' does not respond, setting it as OFFLINE (error=%s)", replica.getRemoteServerName(), e.toString());
+          LogManager.instance().log(this, Level.SEVERE, "Replica '%s' does not respond, setting it as OFFLINE (error=%s)", replica.getRemoteServerName(), e.toString());
           setReplicaStatus(replica.getRemoteServerName(), false);
           throw new ReplicationException("Cannot resend messages to replica '" + replicaName + "'", e);
         }
       }
     }
 
-    server.log(this, Level.INFO, "Recovering completed. Sent %d message(s) to replica '%s' (%d-%d)", totalSentMessages.get(), replicaName, min, max);
+    LogManager.instance().log(this, Level.INFO, "Recovering completed. Sent %d message(s) to replica '%s' (%d-%d)", totalSentMessages.get(), replicaName, min, max);
   }
 
   protected boolean connectToLeader(final String serverEntry) {
@@ -936,14 +940,14 @@ public class HAServer implements ServerPlugin {
 
     } catch (ServerIsNotTheLeaderException e) {
       final String leaderAddress = e.getLeaderAddress();
-      server.log(this, Level.INFO, "Remote server %s:%d is not the Leader, connecting to %s", serverParts[0], Integer.parseInt(serverParts[1]), leaderAddress);
+      LogManager.instance().log(this, Level.INFO, "Remote server %s:%d is not the Leader, connecting to %s", serverParts[0], Integer.parseInt(serverParts[1]), leaderAddress);
 
       final String[] leader = leaderAddress.split(":");
 
       connectToLeader(leader[0], Integer.parseInt(leader[1]));
 
     } catch (Exception e) {
-      server.log(this, Level.INFO, "Error connecting to the remote Leader server %s:%d (error=%s)", serverParts[0], Integer.parseInt(serverParts[1]), e);
+      LogManager.instance().log(this, Level.INFO, "Error connecting to the remote Leader server %s:%d (error=%s)", serverParts[0], Integer.parseInt(serverParts[1]), e);
     }
     return false;
   }
@@ -998,7 +1002,7 @@ public class HAServer implements ServerPlugin {
       // BLOCK HERE THE REQUEST, THE QUORUM CANNOT BE REACHED AT PRIORI
       throw new QuorumNotReachedException("Quorum " + quorum + " not reached because only " + getOnlineReplicas() + " server(s) are online");
 
-    server.log(this, Level.INFO, "Waiting during election (quorum=%d onlineReplicas=%d)", quorum, getOnlineReplicas());
+    LogManager.instance().log(this, Level.INFO, "Waiting during election (quorum=%d onlineReplicas=%d)", quorum, getOnlineReplicas());
 
     for (int retry = 0; retry < 10 && electionStatus != ELECTION_STATUS.DONE; ++retry) {
       try {
@@ -1009,7 +1013,7 @@ public class HAServer implements ServerPlugin {
       }
     }
 
-    server.log(this, Level.INFO, "Waiting is over (electionStatus=%s quorum=%d onlineReplicas=%d)", electionStatus, quorum, getOnlineReplicas());
+    LogManager.instance().log(this, Level.INFO, "Waiting is over (electionStatus=%s quorum=%d onlineReplicas=%d)", electionStatus, quorum, getOnlineReplicas());
 
     return electionStatus == ELECTION_STATUS.DONE;
   }

@@ -1,55 +1,62 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.graph;
 
-import com.arcadedb.database.*;
+import com.arcadedb.database.BaseRecord;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.RID;
+import com.arcadedb.database.RecordInternal;
 import com.arcadedb.serializer.BinaryTypes;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.*;
+import java.util.concurrent.atomic.*;
 
 public class MutableEdgeSegment extends BaseRecord implements EdgeSegment, RecordInternal {
-  public static final  byte RECORD_TYPE            = 3;
-  public static final  int  CONTENT_START_POSITION = Binary.BYTE_SERIALIZED_SIZE + Binary.INT_SERIALIZED_SIZE + BinaryTypes.getTypeSize(BinaryTypes.TYPE_RID);
-  private static final RID  NULL_RID               = new RID(null, -1, -1);
+  public static final byte RECORD_TYPE            = 3;
+  public static final int  CONTENT_START_POSITION = Binary.BYTE_SERIALIZED_SIZE + Binary.INT_SERIALIZED_SIZE + BinaryTypes.getTypeSize(BinaryTypes.TYPE_RID);
+  private final       RID  NULL_RID;
 
   private int bufferSize;
 
   public MutableEdgeSegment(final Database database, final RID rid) {
     super(database, rid, null);
+    NULL_RID = new RID(database, -1, -1);
     this.buffer = null;
   }
 
   public MutableEdgeSegment(final Database database, final RID rid, final Binary buffer) {
     super(database, rid, buffer);
+    NULL_RID = new RID(database, -1, -1);
     this.buffer = buffer;
-    this.buffer.setAutoResizable(false);
-    this.bufferSize = buffer.size();
+    if (buffer != null) {
+      this.buffer.setAutoResizable(false);
+      this.bufferSize = buffer.size();
+    }
   }
 
   public MutableEdgeSegment(final DatabaseInternal database, final int bufferSize) {
     super(database, null, new Binary(bufferSize));
+    NULL_RID = new RID(database, -1, -1);
     this.buffer.setAutoResizable(false);
     this.bufferSize = bufferSize;
     buffer.putByte(0, RECORD_TYPE);
@@ -73,12 +80,10 @@ public class MutableEdgeSegment extends BaseRecord implements EdgeSegment, Recor
 
     if (used + ridSerialized.size() <= bufferSize) {
       // APPEND AT THE END OF THE CURRENT CHUNK
-      buffer.putByteArray(used, ridSerialized.getContent(), ridSerialized.size());
+      buffer.putByteArray(used, ridSerialized.getContent(), ridSerialized.getContentBeginOffset(), ridSerialized.size());
 
       // UPDATE USED BYTES
       buffer.putInt(Binary.BYTE_SERIALIZED_SIZE, used + ridSerialized.size());
-      // TODO save()
-
       return true;
     }
 
@@ -112,7 +117,7 @@ public class MutableEdgeSegment extends BaseRecord implements EdgeSegment, Recor
   }
 
   @Override
-  public boolean containsVertex(final RID rid) {
+  public boolean containsVertex(final RID rid, final int[] edgeBucketFilter) {
     final int used = getUsed();
     if (used == 0)
       return false;
@@ -123,14 +128,21 @@ public class MutableEdgeSegment extends BaseRecord implements EdgeSegment, Recor
     buffer.position(CONTENT_START_POSITION);
 
     while (buffer.position() < used) {
-      // SKIP EDGE RID
-      buffer.getNumber();
+      final int currEdgeBucketId = (int) buffer.getNumber();
       buffer.getNumber();
 
-      final int currEdgeBucketId = (int) buffer.getNumber();
-      final long currEdgePosition = buffer.getNumber();
-      if (currEdgeBucketId == bucketId && currEdgePosition == position)
-        return true;
+      final int currVertexBucketId = (int) buffer.getNumber();
+      final long currVertexPosition = buffer.getNumber();
+      if (currVertexBucketId == bucketId && currVertexPosition == position) {
+        if (edgeBucketFilter != null) {
+          // FILTER BY EDGE BUCKETS
+          for (int i = 0; i < edgeBucketFilter.length; i++) {
+            if (currEdgeBucketId == edgeBucketFilter[i])
+              return true;
+          }
+        } else
+          return true;
+      }
     }
 
     return false;
@@ -158,23 +170,22 @@ public class MutableEdgeSegment extends BaseRecord implements EdgeSegment, Recor
   }
 
   @Override
-  public boolean removeEntry(final int index) {
+  public boolean removeEntry(final int currentPosition, final int nextItemPosition) {
     int used = getUsed();
     if (used == 0)
       return false;
 
-    if (index > used)
+    if (currentPosition > used)
       return false;
 
-    buffer.position(index);
-
     // MOVE THE ENTIRE BUFFER FROM THE NEXT ITEM TO THE CURRENT ONE
-    buffer.move(buffer.position(), index, used - buffer.position());
+    buffer.move(nextItemPosition, currentPosition, used - buffer.position());
 
-    used -= (buffer.position() - index);
+    used -= nextItemPosition - currentPosition;
     setUsed(used);
 
-    buffer.position(index);
+    buffer.position(currentPosition);
+
     return true;
   }
 

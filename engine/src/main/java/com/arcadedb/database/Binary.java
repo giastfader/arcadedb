@@ -1,35 +1,31 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.log.LogManager;
 import com.arcadedb.serializer.UnsignedBytesComparator;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.concurrent.Callable;
-import java.util.logging.Level;
+import java.io.*;
+import java.nio.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 /**
  * Binary data type. It is backed by Java Byte Buffers.
@@ -37,36 +33,42 @@ import java.util.logging.Level;
  * @author Luca Garulli
  */
 public class Binary implements BinaryStructure, Comparable<Binary> {
-  public static final int BYTE_SERIALIZED_SIZE   = 1;
-  public static final int SHORT_SERIALIZED_SIZE  = 2;
-  public static final int INT_SERIALIZED_SIZE    = 4;
-  public static final int LONG_SERIALIZED_SIZE   = 8;
-  public static final int FLOAT_SERIALIZED_SIZE  = 4;
-  public static final int DOUBLE_SERIALIZED_SIZE = 8;
-
+  public static final  int BYTE_SERIALIZED_SIZE     = 1;
+  public static final  int SHORT_SERIALIZED_SIZE    = 2;
+  public static final  int INT_SERIALIZED_SIZE      = 4;
+  public static final  int LONG_SERIALIZED_SIZE     = 8;
+  public static final  int FLOAT_SERIALIZED_SIZE    = 4;
+  public static final  int DOUBLE_SERIALIZED_SIZE   = 8;
   private final static int DEFAULT_ALLOCATION_CHUNK = 512;
+
+  protected       boolean       autoResizable       = true;
+  protected       byte[]        content;
+  protected       ByteBuffer    buffer;
+  protected       int           size;
+  protected       int           allocationChunkSize = DEFAULT_ALLOCATION_CHUNK;
+  protected       FetchCallback fetchCallback;
+  protected final boolean       reusable;
 
   public interface FetchCallback {
     void fetch(Binary newBuffer) throws IOException;
   }
 
-  protected boolean       autoResizable       = true;
-  protected byte[]        content;
-  protected ByteBuffer    buffer;
-  protected int           size;
-  protected int           allocationChunkSize = DEFAULT_ALLOCATION_CHUNK;
-  protected FetchCallback fetchCallback;
-
   public Binary() {
     this.content = new byte[allocationChunkSize];
     this.buffer = ByteBuffer.wrap(content);
-    size = 0;
+    this.size = 0;
+    this.reusable = false;
+  }
+
+  public Binary(final int initialSize, final boolean reusable) {
+    this.content = new byte[initialSize];
+    this.buffer = ByteBuffer.wrap(content);
+    this.size = 0;
+    this.reusable = reusable;
   }
 
   public Binary(final int initialSize) {
-    this.content = new byte[initialSize];
-    this.buffer = ByteBuffer.wrap(content);
-    size = 0;
+    this(initialSize, false);
   }
 
   public Binary(final byte[] buffer) {
@@ -78,6 +80,7 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     this.buffer = ByteBuffer.wrap(content);
     this.size = contentSize;
     this.autoResizable = false;
+    this.reusable = false;
   }
 
   public Binary(final ByteBuffer buffer) {
@@ -85,6 +88,7 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     this.buffer = buffer;
     this.size = buffer.limit();
     this.autoResizable = false;
+    this.reusable = false;
   }
 
   public Binary copy() {
@@ -97,6 +101,21 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     size = 0;
     buffer.clear();
     buffer.position(0);
+  }
+
+  /**
+   * Return a not reusable buffer. if the current object is already not reusable and the underlying buffer fits perfectly the content, then the current object
+   * is returned saving from an unnecessary and expensive copy.
+   */
+  public Binary getNotReusable() {
+    return reusable || size != content.length || buffer.arrayOffset() > 0 ? copy() : this;
+  }
+
+  /**
+   * Tells if the current buffer object is reused. Reusable buffers must be copied to avoid concurrent usage by multiple users.
+   */
+  public boolean isReusable() {
+    return reusable;
   }
 
   public void rewind() {
@@ -120,7 +139,7 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     final int contentSize = toCopy.size();
     if (contentSize > 0) {
       checkForAllocation(buffer.position(), contentSize);
-      buffer.put(toCopy.content, 0, contentSize);
+      buffer.put(toCopy.content, toCopy.getContentBeginOffset(), contentSize);
     }
   }
 
@@ -166,18 +185,6 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
   public int putUnsignedNumber(final int index, final long value) {
     position(index);
     return putUnsignedNumber(value);
-  }
-
-  public int getVarSize(final long value) {
-    int bytesUsed = 0;
-    long v = value;
-    while ((v & 0xFFFFFFFFFFFFFF80L) != 0L) {
-      bytesUsed++;
-      v >>>= 7;
-    }
-    bytesUsed++;
-
-    return bytesUsed;
   }
 
   @Override
@@ -235,12 +242,12 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
 
   @Override
   public int putString(final int index, final String value) {
-    return putBytes(index, value.getBytes());
+    return putBytes(index, value.getBytes(DatabaseFactory.getDefaultCharset()));
   }
 
   @Override
   public int putString(final String value) {
-    return putBytes(value.getBytes());
+    return putBytes(value.getBytes(DatabaseFactory.getDefaultCharset()));
   }
 
   @Override
@@ -272,9 +279,9 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
   }
 
   @Override
-  public void putByteArray(final int index, final byte[] value, final int length) {
+  public void putByteArray(final int index, final byte[] value, final int offset, final int length) {
     position(index);
-    putByteArray(value, length);
+    putByteArray(value, offset, length);
   }
 
   @Override
@@ -284,15 +291,20 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
   }
 
   @Override
-  public void putBuffer(final ByteBuffer value) {
-    checkForAllocation(buffer.position(), value.limit());
-    buffer.put(value);
+  public void putByteArray(final byte[] value, final int length) {
+    putByteArray(value, 0, length);
   }
 
   @Override
-  public void putByteArray(final byte[] value, final int length) {
+  public void putByteArray(final byte[] value, final int offset, final int length) {
     checkForAllocation(buffer.position(), length);
-    buffer.put(value, 0, length);
+    buffer.put(value, offset, length);
+  }
+
+  @Override
+  public void putBuffer(final ByteBuffer value) {
+    checkForAllocation(buffer.position(), value.limit());
+    buffer.put(value);
   }
 
   @Override
@@ -306,6 +318,11 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     return buffer.get();
   }
 
+  /**
+   * Reads a signed number.
+   *
+   * @return An array of longs with the signed number in the 1st position and the occupied bytes on the 2nd position.
+   */
   @Override
   public long[] getNumberAndSize(final int index) {
     position(index);
@@ -342,6 +359,11 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     return value | (b << i);
   }
 
+  /**
+   * Reads an unsigned number.
+   *
+   * @return An array of longs with the unsigned number in the 1st position and the occupied bytes on the 2nd position.
+   */
   @Override
   public long[] getUnsignedNumberAndSize() {
     long value = 0L;
@@ -401,12 +423,12 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
 
   @Override
   public String getString() {
-    return new String(getBytes());
+    return new String(getBytes(), DatabaseFactory.getDefaultCharset());
   }
 
   @Override
   public String getString(final int index) {
-    return new String(getBytes(index));
+    return new String(getBytes(index), DatabaseFactory.getDefaultCharset());
   }
 
   @Override
@@ -513,7 +535,7 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     return size;
   }
 
-  public void size(int newSize) {
+  public void size(final int newSize) {
     if (newSize > content.length)
       checkForAllocation(0, newSize);
     else
@@ -531,6 +553,10 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     return content;
   }
 
+  public int getContentBeginOffset() {
+    return buffer.arrayOffset();
+  }
+
   public int readFromStream(final InputStream is) throws IOException {
     final int read = is.read(content, buffer.position(), buffer.capacity() - buffer.position());
     size += read;
@@ -541,9 +567,11 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
     return content.length;
   }
 
-  public static int getNumberSpace(long value) {
-    value = (value << 1) ^ (value >> 63);
+  public static int getNumberSpace(final long value) {
+    return getUnsignedNumberSpace((value << 1) ^ (value >> 63));
+  }
 
+  public static int getUnsignedNumberSpace(final long value) {
     int bytesUsed = 0;
     long v = value;
     while ((v & 0xFFFFFFFFFFFFFF80L) != 0L) {
@@ -567,8 +595,11 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
    * @param bytesToWrite number of bytes to write
    */
   protected void checkForAllocation(final int offset, final int bytesToWrite) {
-    if (offset + bytesToWrite > content.length) {
+    final long newSizeAsLong = (long) offset + (long) bytesToWrite;
+    if (newSizeAsLong > Integer.MAX_VALUE)
+      throw new IllegalArgumentException("Binary objects cannot be larger than 2GB");
 
+    if (offset + bytesToWrite > content.length) {
       if (!autoResizable)
         throw new IllegalArgumentException("Cannot resize the buffer (autoResizable=false)");
 
@@ -579,7 +610,8 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
         newSize = allocationChunkSize;
 
       final byte[] newContent = new byte[newSize];
-      System.arraycopy(content, 0, newContent, 0, content.length);
+      if (size > 0)
+        System.arraycopy(content, 0, newContent, 0, content.length);
       this.content = newContent;
 
       final int oldPosition = this.buffer.position();
@@ -608,6 +640,21 @@ public class Binary implements BinaryStructure, Comparable<Binary> {
 
   public void fetch(final FetchCallback callback) {
     fetchCallback = callback;
+  }
+
+  @Override
+  public boolean equals(final Object o) {
+    if (this == o)
+      return true;
+    if (!(o instanceof Binary))
+      return false;
+    final Binary binary = (Binary) o;
+    return UnsignedBytesComparator.BEST_COMPARATOR.compare(content, binary.content) == 0;
+  }
+
+  @Override
+  public int hashCode() {
+    return Arrays.hashCode(content);
   }
 
   @Override

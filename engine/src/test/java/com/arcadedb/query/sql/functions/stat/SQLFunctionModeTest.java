@@ -1,66 +1,86 @@
+/*
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.arcadedb.query.sql.functions.stat;
 
 import com.arcadedb.query.sql.function.stat.SQLFunctionMode;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SQLFunctionModeTest {
 
-  private SQLFunctionMode mode;
+    private SQLFunctionMode mode;
 
-  @BeforeEach
-  public void setup() {
-    mode = new SQLFunctionMode();
-  }
-
-  @Test
-  public void testEmpty() {
-    Object result = mode.getResult();
-    Assertions.assertNull(result);
-  }
-
-  @Test
-  public void testSingleMode() {
-    int[] scores = { 1, 2, 3, 3, 3, 2 };
-
-    for (int s : scores) {
-      mode.execute(null, null, null, new Object[] { s }, null);
+    @BeforeEach
+    public void setup() {
+        mode = new SQLFunctionMode();
     }
 
-    Object result = mode.getResult();
-    Assertions.assertEquals(3, (int) ((List<Integer>) result).get(0));
-  }
-
-  @Test
-  public void testMultiMode() {
-    int[] scores = { 1, 2, 3, 3, 3, 2, 2 };
-
-    for (int s : scores) {
-      mode.execute(null, null, null, new Object[] { s }, null);
+    @Test
+    public void testEmpty() {
+        Object result = mode.getResult();
+        assertNull(result);
     }
 
-    Object result = mode.getResult();
-    List<Integer> modes = (List<Integer>) result;
-    Assertions.assertEquals(2, modes.size());
-    Assertions.assertTrue(modes.contains(2));
-    Assertions.assertTrue(modes.contains(3));
-  }
+    @Test
+    public void testSingleMode() {
+        int[] scores = {1, 2, 3, 3, 3, 2};
 
-  @Test
-  public void testMultiValue() {
-    List[] scores = new List[2];
-    scores[0] = Arrays.asList(new Integer[] { 1, 2, null, 3, 4 });
-    scores[1] = Arrays.asList(new Integer[] { 1, 1, 1, 2, null });
+        for (int s : scores) {
+            mode.execute(null, null, null, new Object[]{s}, null);
+        }
 
-    for (List s : scores) {
-      mode.execute(null, null, null, new Object[] { s }, null);
+        Object result = mode.getResult();
+        assertEquals(3, (int) ((List<Integer>) result).get(0));
     }
 
-    Object result = mode.getResult();
-    Assertions.assertEquals(1, (int) ((List<Integer>) result).get(0));
-  }
+    @Test
+    public void testMultiMode() {
+        int[] scores = {1, 2, 3, 3, 3, 2, 2};
+
+        for (int s : scores) {
+            mode.execute(null, null, null, new Object[]{s}, null);
+        }
+
+        Object result = mode.getResult();
+        List<Integer> modes = (List<Integer>) result;
+        assertEquals(2, modes.size());
+        assertTrue(modes.contains(2));
+        assertTrue(modes.contains(3));
+    }
+
+    @Test
+    public void testMultiValue() {
+        List[] scores = new List[2];
+        scores[0] = Arrays.asList(1, 2, null, 3, 4);
+        scores[1] = Arrays.asList(1, 1, 1, 2, null);
+
+        for (List s : scores) {
+            mode.execute(null, null, null, new Object[]{s}, null);
+        }
+
+        Object result = mode.getResult();
+        assertEquals(1, (int) ((List<Integer>) result).get(0));
+    }
 }

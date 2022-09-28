@@ -1,55 +1,47 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb;
 
 import com.arcadedb.engine.Bucket;
 import com.arcadedb.log.LogManager;
+import com.arcadedb.serializer.BinaryComparator;
 import com.arcadedb.utility.Callable;
 import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.SystemVariableResolver;
 import org.json.JSONObject;
 
-import java.io.PrintStream;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.logging.*;
 
 /**
  * Keeps all configuration settings. At startup assigns the configuration values by reading system properties.
  */
 public enum GlobalConfiguration {
   // ENVIRONMENT
-  DUMP_CONFIG_AT_STARTUP("arcadedb.dumpConfigAtStartup", "Dumps the configuration at startup", Boolean.class, false, new Callable<Object, Object>() {
-    @Override
-    public Object call(final Object value) {
-      dumpConfiguration(System.out);
-      return value;
-    }
+  DUMP_CONFIG_AT_STARTUP("arcadedb.dumpConfigAtStartup", "Dumps the configuration at startup", Boolean.class, false, value -> {
+    dumpConfiguration(System.out);
+    return value;
   }),
 
   DUMP_METRICS_EVERY("arcadedb.dumpMetricsEvery", "Dumps the metrics at startup, shutdown and every configurable amount of time (in seconds)", Long.class, 0,
-      new Callable<Object, Object>() {
+      new Callable<>() {
         @Override
         public Object call(final Object value) {
           final long time = (long) value * 1000;
@@ -67,48 +59,47 @@ public enum GlobalConfiguration {
         }
       }),
 
-  PROFILE("arcadedb.profile", "Specify the preferred profile among: default, high-performance, low-ram, low-cpu", String.class, "default",
-      new Callable<Object, Object>() {
-        @Override
-        public Object call(final Object value) {
-          final String v = value.toString();
-          if (v.equalsIgnoreCase("default")) {
-            // NOT MUCH TO DO HERE, THIS IS THE DEFAULT OPTION
-          } else if (v.equalsIgnoreCase("high-performance")) {
-            ASYNC_OPERATIONS_QUEUE_IMPL.setValue("fast");
+  PROFILE("arcadedb.profile", "Specify the preferred profile among: default, high-performance, low-ram, low-cpu", String.class, "default", new Callable<>() {
+    @Override
+    public Object call(final Object value) {
+      final String v = value.toString();
+      if (v.equalsIgnoreCase("default")) {
+        // NOT MUCH TO DO HERE, THIS IS THE DEFAULT OPTION
+      } else if (v.equalsIgnoreCase("high-performance")) {
+        ASYNC_OPERATIONS_QUEUE_IMPL.setValue("fast");
 
-            final int cores = Runtime.getRuntime().availableProcessors();
-            if (cores > 1)
-              // USE ONLY HALF OF THE CORES MINUS ONE
-              ASYNC_WORKER_THREADS.setValue((cores / 2) - 1);
-            else
-              ASYNC_WORKER_THREADS.setValue(1);
+        final int cores = Runtime.getRuntime().availableProcessors();
+        if (cores > 1)
+          // USE ONLY HALF OF THE CORES MINUS ONE
+          ASYNC_WORKER_THREADS.setValue((cores / 2) - 1);
+        else
+          ASYNC_WORKER_THREADS.setValue(1);
 
-          } else if (v.equalsIgnoreCase("low-ram")) {
-            MAX_PAGE_RAM.setValue(16); // 16 MB OF RAM FOR PAGE CACHE
-            INDEX_COMPACTION_RAM_MB.setValue(16);
-            INITIAL_PAGE_CACHE_SIZE.setValue(256);
-            FREE_PAGE_RAM.setValue(100);
-            ASYNC_OPERATIONS_QUEUE_SIZE.setValue(8);
-            ASYNC_TX_BATCH_SIZE.setValue(8);
-            PAGE_FLUSH_QUEUE.setValue(8);
-            SQL_STATEMENT_CACHE.setValue(16);
-            HA_REPLICATION_QUEUE_SIZE.setValue(8);
-            ASYNC_OPERATIONS_QUEUE_IMPL.setValue("standard");
+      } else if (v.equalsIgnoreCase("low-ram")) {
+        MAX_PAGE_RAM.setValue(16); // 16 MB OF RAM FOR PAGE CACHE
+        INDEX_COMPACTION_RAM_MB.setValue(16);
+        INITIAL_PAGE_CACHE_SIZE.setValue(256);
+        FREE_PAGE_RAM.setValue(100);
+        ASYNC_OPERATIONS_QUEUE_SIZE.setValue(8);
+        ASYNC_TX_BATCH_SIZE.setValue(8);
+        PAGE_FLUSH_QUEUE.setValue(8);
+        SQL_STATEMENT_CACHE.setValue(16);
+        HA_REPLICATION_QUEUE_SIZE.setValue(8);
+        ASYNC_OPERATIONS_QUEUE_IMPL.setValue("standard");
 
-          } else if (v.equalsIgnoreCase("low-cpu")) {
-            ASYNC_WORKER_THREADS.setValue(1);
-            ASYNC_OPERATIONS_QUEUE_IMPL.setValue("standard");
-          } else
-            throw new IllegalArgumentException("Profile '" + v + "' not available");
+      } else if (v.equalsIgnoreCase("low-cpu")) {
+        ASYNC_WORKER_THREADS.setValue(1);
+        ASYNC_OPERATIONS_QUEUE_IMPL.setValue("standard");
+      } else
+        throw new IllegalArgumentException("Profile '" + v + "' not available");
 
-          return value;
-        }
-      }),
+      return value;
+    }
+  }),
 
   TEST("arcadedb.test", "Tells if it is running in test mode. This enables the calling of callbacks for testing purpose ", Boolean.class, false),
 
-  MAX_PAGE_RAM("arcadedb.maxPageRAM", "Maximum amount of pages (in MB) to keep in RAM", Long.class, 4 * 1024, new Callable<Object, Object>() {
+  MAX_PAGE_RAM("arcadedb.maxPageRAM", "Maximum amount of pages (in MB) to keep in RAM", Long.class, 4 * 1024, new Callable<>() {
     @Override
     public Object call(final Object value) {
       final long maxRAM = ((long) value) * 1024 * 1024; // VALUE IN MB
@@ -116,7 +107,7 @@ public enum GlobalConfiguration {
       if (maxRAM > Runtime.getRuntime().maxMemory() * 80 / 100) {
         final long newValue = Runtime.getRuntime().maxMemory() / 2;
         if (LogManager.instance() != null)
-          LogManager.instance().log(this, Level.WARNING, "Setting '%s=%s' is > than 80%% of maximum heap (%s). Decreasing it to %s", null, MAX_PAGE_RAM.key,
+          LogManager.instance().log(this, Level.WARNING, "Setting '%s=%s' is > than 80%% of maximum heap (%s). Decreasing it to %s", MAX_PAGE_RAM.key,
               FileUtils.getSizeAsString(maxRAM), FileUtils.getSizeAsString(Runtime.getRuntime().maxMemory()), FileUtils.getSizeAsString(newValue));
         else
           System.out.println(
@@ -127,12 +118,7 @@ public enum GlobalConfiguration {
       }
       return value;
     }
-  }, new Callable<Object, Object>() {
-    @Override
-    public Object call(final Object value) {
-      return Runtime.getRuntime().maxMemory() / 4 / 1024 / 1024;
-    }
-  }),
+  }, value -> Runtime.getRuntime().maxMemory() / 4 / 1024 / 1024),
 
   INITIAL_PAGE_CACHE_SIZE("arcadedb.initialPageCacheSize", "Initial number of entries for page cache", Integer.class, 65535),
 
@@ -144,6 +130,8 @@ public enum GlobalConfiguration {
       Integer.class, 0),
 
   FREE_PAGE_RAM("arcadedb.freePageRAM", "Percentage (0-100) of memory to free when Page RAM is full", Integer.class, 50),
+
+  TYPE_DEFAULT_BUCKETS("arcadedb.typeDefaultBuckets", "Default number of buckets to create per type", Integer.class, 8),
 
   BUCKET_DEFAULT_PAGE_SIZE("arcadedb.bucketDefaultPageSize", "Default page size in bytes for buckets. Default is " + Bucket.DEF_PAGE_SIZE, Integer.class,
       Bucket.DEF_PAGE_SIZE),
@@ -160,11 +148,11 @@ public enum GlobalConfiguration {
 
   ASYNC_TX_BATCH_SIZE("arcadedb.asyncTxBatchSize", "Maximum number of operations to commit in batch by async thread", Integer.class, 1024 * 10),
 
-  PAGE_FLUSH_QUEUE("arcadedb.pageFlushQueue", "Size of the asynchronous page flush queue", Integer.class, 128),
+  PAGE_FLUSH_QUEUE("arcadedb.pageFlushQueue", "Size of the asynchronous page flush queue", Integer.class, 512),
 
   COMMIT_LOCK_TIMEOUT("arcadedb.commitLockTimeout", "Timeout in ms to lock resources during commit", Long.class, 5000),
 
-  TX_RETRIES("arcadedb.txRetries", "Number of retries in case of MVCC exception", Integer.class, 50),
+  TX_RETRIES("arcadedb.txRetries", "Number of retries in case of MVCC exception", Integer.class, 3),
 
   // SQL
   SQL_STATEMENT_CACHE("arcadedb.sqlStatementCache", "Maximum number of parsed statements to keep in cache", Integer.class, 300),
@@ -191,13 +179,13 @@ public enum GlobalConfiguration {
 
   NETWORK_USE_SSL("arcadedb.ssl.enabled", "Use SSL for client connections", Boolean.class, false),
 
-  NETWORK_SSL_KEYSTORE("arcadedb.ssl.keyStore", "Use SSL for client connections", String.class, null),
+  NETWORK_SSL_KEYSTORE("arcadedb.ssl.keyStore", "Path where the SSL certificates are stored", String.class, null),
 
-  NETWORK_SSL_KEYSTORE_PASSWORD("arcadedb.ssl.keyStorePass", "Use SSL for client connections", String.class, null),
+  NETWORK_SSL_KEYSTORE_PASSWORD("arcadedb.ssl.keyStorePass", "Password to open the SSL key store", String.class, null),
 
-  NETWORK_SSL_TRUSTSTORE("arcadedb.ssl.trustStore", "Use SSL for client connections", String.class, null),
+  NETWORK_SSL_TRUSTSTORE("arcadedb.ssl.trustStore", "Path to the SSL trust store", String.class, null),
 
-  NETWORK_SSL_TRUSTSTORE_PASSWORD("arcadedb.ssl.trustStorePass", "Use SSL for client connections", String.class, null),
+  NETWORK_SSL_TRUSTSTORE_PASSWORD("arcadedb.ssl.trustStorePass", "Password to open the SSL trust store", String.class, null),
 
   // SERVER
   SERVER_NAME("arcadedb.server.name", "Server name", String.class, Constants.PRODUCT + "_0"),
@@ -214,20 +202,29 @@ public enum GlobalConfiguration {
 
   SERVER_DATABASE_DIRECTORY("arcadedb.server.databaseDirectory", "Directory containing the database", String.class, "${arcadedb.server.rootPath}/databases"),
 
+  SERVER_DATABASE_LOADATSTARTUP("arcadedb.server.databaseLoadAtStartup", "Open all the available databases at server startup", Boolean.class, true),
+
   SERVER_PLUGINS("arcadedb.server.plugins", "List of server plugins to install. The format to load a plugin is: `<pluginName>:<pluginFullClass>`", String.class,
       ""),
 
   SERVER_DEFAULT_DATABASES("arcadedb.server.defaultDatabases",
-      "The default databases created when the server starts. The format is '(<database-name>[(<user-name>:<user-passwd>)[,]*])[;]*'. Pay attention on using ';'"
-          + " to separate databases and ',' to separate credentials. Example: 'Universe[elon:musk];Amiga[Jay:Miner,Jack:Tramiel]'", String.class, ""),
+      "The default databases created when the server starts. The format is `(<database-name>[(<user-name>:<user-passwd>[:<user-group>])[,]*])[{import|restore:<URL>}][;]*'. Pay attention on using `;`"
+          + " to separate databases and `,` to separate credentials. The supported actions are `import` and `restore`. Example: `Universe[elon:musk:admin];Amiga[Jay:Miner,Jack:Tramiel]{import:/tmp/movies.tgz}`",
+      String.class, ""),
 
   // SERVER HTTP
   SERVER_HTTP_INCOMING_HOST("arcadedb.server.httpIncomingHost", "TCP/IP host name used for incoming HTTP connections", String.class, "0.0.0.0"),
 
-  SERVER_HTTP_INCOMING_PORT("arcadedb.server.httpIncomingPort", "TCP/IP port number used for incoming HTTP connections", Integer.class, 2480),
+  SERVER_HTTP_INCOMING_PORT("arcadedb.server.httpIncomingPort",
+      "TCP/IP port number used for incoming HTTP connections. Specify a single port or a range `<from-<to>`. Default is 2480-2489 to accept a range of ports in case they are occupied.",
+      String.class, "2480-2489"),
 
-  SERVER_HTTP_AUTOINCREMENT_PORT("arcadedb.server.httpAutoIncrementPort",
-      "True to increment the TCP/IP port number used for incoming HTTP in case the configured is not available", Boolean.class, true),
+  SERVER_HTTP_TX_EXPIRE_TIMEOUT("arcadedb.server.httpTxExpireTimeout",
+      "Timeout in seconds for a HTTP transaction to expire. This timeout is computed from the latest command against the transaction", Long.class, 30),
+
+  // SERVER WS
+  SERVER_WS_EVENT_BUS_QUEUE_SIZE("arcadedb.server.eventBusQueueSize", "Size of the queue used as a buffer for unserviced database change events.",
+      Integer.class, 1000),
 
   // SERVER SECURITY
   SERVER_SECURITY_ALGORITHM("arcadedb.server.securityAlgorithm", "Default encryption algorithm used for passwords hashing", String.class,
@@ -242,6 +239,12 @@ public enum GlobalConfiguration {
   // HA
   HA_ENABLED("arcadedb.ha.enabled", "True if HA is enabled for the current server", Boolean.class, false),
 
+  HA_CLUSTER_NAME("arcadedb.ha.clusterName", "Cluster name. By default is 'arcadedb'. Useful in case of multiple clusters in the same network", String.class,
+      Constants.PRODUCT.toLowerCase()),
+
+  HA_SERVER_LIST("arcadedb.ha.serverList",
+      "Servers in the cluster as a list of <hostname/ip-address:port> items separated by comma. Example: localhost:2424,192.168.0.1:2424", String.class, ""),
+
   HA_QUORUM("arcadedb.ha.quorum", "Default quorum between 'none', 1, 2, 3, 'majority' and 'all' servers. Default is majority", String.class, "MAJORITY"),
 
   HA_QUORUM_TIMEOUT("arcadedb.ha.quorumTimeout", "Timeout waiting for the quorum", Long.class, 10000),
@@ -255,21 +258,36 @@ public enum GlobalConfiguration {
   HA_REPLICATION_CHUNK_MAXSIZE("arcadedb.ha.replicationChunkMaxSize",
       "Maximum channel chunk size for replicating messages between servers. Default is 16777216", Integer.class, 16384 * 1024),
 
-  HA_REPLICATION_INCOMING_HOST("arcadedb.ha.replicationIncomingHost", "TCP/IP host name used for incoming replication connections", String.class, "localhost"),
+  HA_REPLICATION_INCOMING_HOST("arcadedb.ha.replicationIncomingHost",
+      "TCP/IP host name used for incoming replication connections. By default is 0.0.0.0 (listens to all the configured network interfaces)", String.class,
+      "0.0.0.0"),
 
   HA_REPLICATION_INCOMING_PORTS("arcadedb.ha.replicationIncomingPorts", "TCP/IP port number used for incoming replication connections", String.class,
       "2424-2433"),
-
-  HA_CLUSTER_NAME("arcadedb.ha.clusterName", "Cluster name. By default is 'arcadedb'. Useful in case of multiple clusters in the same network", String.class,
-      Constants.PRODUCT.toLowerCase()),
 
   HA_K8S("arcadedb.ha.k8s", "The server is running inside Kubernetes", Boolean.class, false),
 
   HA_K8S_DNS_SUFFIX("arcadedb.ha.k8sSuffix",
       "When running inside Kubernetes use this suffix to reach the other servers. Example: arcadedb.default.svc.cluster.local", String.class, ""),
 
-  HA_SERVER_LIST("arcadedb.ha.serverList", "List of <hostname/ip-address:port> items separated by comma. Example: localhost:2424,192.168.0.1:2424",
-      String.class, ""),
+  // CYPHER
+  CYPHER_STATEMENT_CACHE("arcadedb.cypher.statementCache",
+      "Max number of entries in the cypher statement cache. Use 0 to disable. Caching statements speeds up execution of the same cypher queries", Integer.class,
+      1000),
+
+  // GREMLIN
+
+  // POSTGRES
+  POSTGRES_PORT("arcadedb.postgres.port", "TCP/IP port number used for incoming connections for Postgres plugin. Default is 5432", Integer.class, 5432),
+
+  POSTGRES_HOST("arcadedb.postgres.host", "TCP/IP host name used for incoming connections for Postgres plugin. Default is '0.0.0.0'", String.class, "0.0.0.0"),
+
+  POSTGRES_DEBUG("arcadedb.postgres.debug", "Enables the printing of Postgres protocol to the console. Default is false", Boolean.class, false),
+
+  // REDIS
+  REDIS_PORT("arcadedb.redis.port", "TCP/IP port number used for incoming connections for Redis plugin. Default is 6379", Integer.class, 6379),
+
+  REDIS_HOST("arcadedb.redis.host", "TCP/IP host name used for incoming connections for Redis plugin. Default is '0.0.0.0'", String.class, "0.0.0.0"),
   ;
 
   /**
@@ -393,8 +411,11 @@ public enum GlobalConfiguration {
    * @return OGlobalConfiguration instance if found, otherwise null
    */
   public static GlobalConfiguration findByKey(final String iKey) {
+    String key = iKey;
+    if (!key.startsWith(PREFIX))
+      key = PREFIX + iKey;
     for (GlobalConfiguration v : values()) {
-      if (v.getKey().equalsIgnoreCase(iKey))
+      if (v.getKey().equalsIgnoreCase(key))
         return v;
     }
     return null;
@@ -407,10 +428,10 @@ public enum GlobalConfiguration {
   public static void setConfiguration(final Map<String, Object> iConfig) {
     for (Map.Entry<String, Object> config : iConfig.entrySet()) {
       for (GlobalConfiguration v : values()) {
-        if (v.getKey().equals(config.getKey())) {
+        if (BinaryComparator.equalsString(v.getKey(), config.getKey())) {
           v.setValue(config.getValue());
           break;
-        } else if (v.name().equals(config.getKey())) {
+        } else if (BinaryComparator.equalsString(v.name(), config.getKey())) {
           v.setValue(config.getValue());
           break;
         }
@@ -473,41 +494,42 @@ public enum GlobalConfiguration {
   }
 
   public void setValue(final Object iValue) {
-    if (iValue != null)
-      if (type == Boolean.class)
-        value = Boolean.parseBoolean(iValue.toString());
-      else if (type == Integer.class)
-        value = Integer.parseInt(iValue.toString());
-      else if (type == Long.class)
-        value = Long.parseLong(iValue.toString());
-      else if (type == Float.class)
-        value = Float.parseFloat(iValue.toString());
-      else if (type == String.class)
-        value = iValue.toString();
-      else if (type.isEnum()) {
-        boolean accepted = false;
+    if (iValue == null)
+      value = null;
+    else if (type == Boolean.class)
+      value = Boolean.parseBoolean(iValue.toString());
+    else if (type == Integer.class)
+      value = Integer.parseInt(iValue.toString());
+    else if (type == Long.class)
+      value = Long.parseLong(iValue.toString());
+    else if (type == Float.class)
+      value = Float.parseFloat(iValue.toString());
+    else if (type == String.class)
+      value = iValue.toString();
+    else if (type.isEnum()) {
+      boolean accepted = false;
 
-        if (type.isInstance(iValue)) {
-          value = iValue;
-          accepted = true;
-        } else if (iValue instanceof String) {
-          final String string = (String) iValue;
+      if (type.isInstance(iValue)) {
+        value = iValue;
+        accepted = true;
+      } else if (iValue instanceof String) {
+        final String string = (String) iValue;
 
-          for (Object constant : type.getEnumConstants()) {
-            final Enum<?> enumConstant = (Enum<?>) constant;
+        for (Object constant : type.getEnumConstants()) {
+          final Enum<?> enumConstant = (Enum<?>) constant;
 
-            if (enumConstant.name().equalsIgnoreCase(string)) {
-              value = enumConstant;
-              accepted = true;
-              break;
-            }
+          if (enumConstant.name().equalsIgnoreCase(string)) {
+            value = enumConstant;
+            accepted = true;
+            break;
           }
         }
+      }
 
-        if (!accepted)
-          throw new IllegalArgumentException("Invalid value of `" + key + "` option");
-      } else
-        value = iValue;
+      if (!accepted)
+        throw new IllegalArgumentException("Invalid value of `" + key + "` option");
+    } else
+      value = iValue;
 
     if (callback != null)
       try {

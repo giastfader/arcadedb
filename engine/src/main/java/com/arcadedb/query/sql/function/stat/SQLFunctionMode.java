@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.query.sql.function.stat;
 
@@ -25,10 +23,7 @@ import com.arcadedb.query.sql.executor.CommandContext;
 import com.arcadedb.query.sql.executor.MultiValue;
 import com.arcadedb.query.sql.function.SQLFunctionAbstract;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Compute the mode (or multimodal) value for a field. The scores in the field's distribution that occurs more frequently. Nulls are
@@ -40,17 +35,16 @@ public class SQLFunctionMode extends SQLFunctionAbstract {
 
   public static final String NAME = "mode";
 
-  private Map<Object, Integer> seen     = new HashMap<Object, Integer>();
-  private int                  max      = 0;
-  private List<Object>         maxElems = new ArrayList<Object>();
+  private final Map<Object, Integer> seen     = new HashMap<Object, Integer>();
+  private       int                  max      = 0;
+  private final List<Object>         maxElems = new ArrayList<Object>();
 
   public SQLFunctionMode() {
     super(NAME);
   }
 
   @Override
-  public Object execute( Object iThis, Identifiable iCurrentRecord, Object iCurrentResult,
-      Object[] iParams, CommandContext iContext) {
+  public Object execute(Object iThis, Identifiable iCurrentRecord, Object iCurrentResult, Object[] iParams, CommandContext iContext) {
 
     if (MultiValue.isMultiValue(iParams[0])) {
       for (Object o : MultiValue.getMultiValueIterable(iParams[0])) {

@@ -1,45 +1,36 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.engine.WALFile;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.server.log.ServerLogger;
 import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.LockContext;
 import com.arcadedb.utility.Pair;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.logging.Level;
+import java.io.*;
+import java.nio.*;
+import java.nio.channels.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 /**
  * Replication Log File. Writes the messages to send to a remote node on reconnection.
@@ -50,7 +41,6 @@ import java.util.logging.Level;
  * ( MSG ID + COMMAND( CMD ID + MSG ID + SERIALIZATION ) )
  */
 public class ReplicationLogFile extends LockContext {
-  private final        ServerLogger                  serverLogger;
   private final        String                        filePath;
   private              FileChannel                   lastChunkChannel;
   private              FileChannel                   searchChannel        = null;
@@ -59,14 +49,14 @@ public class ReplicationLogFile extends LockContext {
   private final        ByteBuffer                    bufferHeader         = ByteBuffer.allocate(BUFFER_HEADER_SIZE);
   private static final int                           BUFFER_FOOTER_SIZE   = Binary.INT_SERIALIZED_SIZE + Binary.LONG_SERIALIZED_SIZE;
   private final        ByteBuffer                    bufferFooter         = ByteBuffer.allocate(BUFFER_FOOTER_SIZE);
-  private static final long                          MAGIC_NUMBER         = 93719829258702l;
-  private              long                          lastMessageNumber    = -1;
-  private final        long                          CHUNK_SIZE           = 64 * 1024 * 1024;
+  private static final long                          MAGIC_NUMBER         = 93719829258702L;
+  private              long                          lastMessageNumber    = -1L;
+  private final static long                          CHUNK_SIZE           = 64L * 1024L * 1024L;
   private              long                          chunkNumber          = 0L;
   private              WALFile.FLUSH_TYPE            flushPolicy          = WALFile.FLUSH_TYPE.NO;
   private              ReplicationLogArchiveCallback archiveChunkCallback = null;
-  private              long                          totalArchivedChunks  = 0;
-  private              long                          maxArchivedChunks    = 200;
+  private              long                          totalArchivedChunks  = 0L;
+  private              long                          maxArchivedChunks    = 200L;
 
   private static final Comparator<File> LOG_COMPARATOR = (file1, file2) -> {
     int seq1 = Integer.parseInt(file1.getName().substring(file1.getName().lastIndexOf(".") + 1));
@@ -90,8 +80,7 @@ public class ReplicationLogFile extends LockContext {
     }
   }
 
-  public ReplicationLogFile(final String filePath, final ServerLogger serverLogger) throws FileNotFoundException {
-    this.serverLogger = serverLogger;
+  public ReplicationLogFile(final String filePath ) throws FileNotFoundException {
     this.filePath = filePath;
 
     final File f = new File(filePath);
@@ -106,19 +95,16 @@ public class ReplicationLogFile extends LockContext {
   }
 
   public void close() {
-    executeInLock(new Callable<Object>() {
-      @Override
-      public Object call() throws Exception {
-        lastChunkChannel.force(true);
-        lastChunkChannel.close();
-        lastChunkChannel = null;
+    executeInLock(() -> {
+      lastChunkChannel.force(true);
+      lastChunkChannel.close();
+      lastChunkChannel = null;
 
-        if (searchChannel != null) {
-          searchChannel.close();
-          searchChannel = null;
-        }
-        return null;
+      if (searchChannel != null) {
+        searchChannel.close();
+        searchChannel = null;
       }
+      return null;
     });
   }
 
@@ -133,61 +119,58 @@ public class ReplicationLogFile extends LockContext {
   }
 
   public boolean appendMessage(final ReplicationMessage message) {
-    return (boolean) executeInLock(new Callable<Object>() {
-      @Override
-      public Object call() {
-        try {
-          if (!checkMessageOrder(message))
-            return false;
+    return (boolean) executeInLock(() -> {
+      try {
+        if (!checkMessageOrder(message))
+          return false;
 
-          if (lastChunkChannel == null)
-            return false;
+        if (lastChunkChannel == null)
+          return false;
 
-          // UPDATE LAST MESSAGE NUMBER
-          lastMessageNumber = message.messageNumber;
+        // UPDATE LAST MESSAGE NUMBER
+        lastMessageNumber = message.messageNumber;
 
-          final byte[] content = message.payload.toByteArray();
+        final byte[] content = message.payload.toByteArray();
 
-          final int entrySize = BUFFER_HEADER_SIZE + content.length + BUFFER_FOOTER_SIZE;
+        final int entrySize = BUFFER_HEADER_SIZE + content.length + BUFFER_FOOTER_SIZE;
 
-          if (entrySize > CHUNK_SIZE)
-            throw new IllegalArgumentException("Cannot store in replication file messages bigger than " + FileUtils.getSizeAsString(CHUNK_SIZE));
+        if (entrySize > CHUNK_SIZE)
+          throw new IllegalArgumentException("Cannot store in replication file messages bigger than " + FileUtils.getSizeAsString(CHUNK_SIZE));
 
-          if (lastChunkChannel.size() + entrySize > CHUNK_SIZE)
-            archiveChunk();
+        if (lastChunkChannel.size() + entrySize > CHUNK_SIZE)
+          archiveChunk();
 
-          // WRITE HEADER
-          bufferHeader.clear();
-          bufferHeader.putLong(message.messageNumber);
-          bufferHeader.putInt(content.length);
-          bufferHeader.rewind();
-          lastChunkChannel.write(bufferHeader, lastChunkChannel.size());
+        // WRITE HEADER
+        bufferHeader.clear();
+        bufferHeader.putLong(message.messageNumber);
+        bufferHeader.putInt(content.length);
+        bufferHeader.rewind();
+        lastChunkChannel.write(bufferHeader, lastChunkChannel.size());
 
-          // WRITE PAYLOAD
-          lastChunkChannel.write(ByteBuffer.wrap(content), lastChunkChannel.size());
+        // WRITE PAYLOAD
+        lastChunkChannel.write(ByteBuffer.wrap(content), lastChunkChannel.size());
 
-          // WRITE FOOTER
-          bufferFooter.clear();
-          bufferFooter.putInt(entrySize);
-          bufferFooter.putLong(MAGIC_NUMBER);
-          bufferFooter.rewind();
+        // WRITE FOOTER
+        bufferFooter.clear();
+        bufferFooter.putInt(entrySize);
+        bufferFooter.putLong(MAGIC_NUMBER);
+        bufferFooter.rewind();
 
-          lastChunkChannel.write(bufferFooter, lastChunkChannel.size());
+        lastChunkChannel.write(bufferFooter, lastChunkChannel.size());
 
-          switch (flushPolicy) {
-          case YES_FULL:
-            lastChunkChannel.force(true);
-            break;
-          case YES_NOMETADATA:
-            lastChunkChannel.force(false);
-            break;
-          }
-
-          return true;
-
-        } catch (Exception e) {
-          throw new ReplicationLogException("Error on writing message " + message.messageNumber + " to the replication log", e);
+        switch (flushPolicy) {
+        case YES_FULL:
+          lastChunkChannel.force(true);
+          break;
+        case YES_NOMETADATA:
+          lastChunkChannel.force(false);
+          break;
         }
+
+        return true;
+
+      } catch (Exception e) {
+        throw new ReplicationLogException("Error on writing message " + message.messageNumber + " to the replication log", e);
       }
     });
   }
@@ -195,54 +178,51 @@ public class ReplicationLogFile extends LockContext {
   public long findMessagePosition(final long messageNumberToFind) {
     // TODO: CHECK THE LAST MESSAGE AND DECIDE WHERE TO START EITHER FROM THE HEAD OR FROM THE TAIL
 
-    return (long) executeInLock(new Callable<Object>() {
-      @Override
-      public Object call() throws Exception {
-        // LOOK FOR THE RIGHT FILE
-        long chunkId = chunkNumber;
+    return (long) executeInLock(() -> {
+      // LOOK FOR THE RIGHT FILE
+      long chunkId = chunkNumber;
 
-        while (chunkId > -1) {
-          if (!openChunk(chunkId))
-            return -1l;
+      while (chunkId > -1) {
+        if (!openChunk(chunkId))
+          return -1L;
 
-          bufferHeader.clear();
-          searchChannel.read(bufferHeader, 0);
-          bufferHeader.rewind();
+        bufferHeader.clear();
+        searchChannel.read(bufferHeader, 0);
+        bufferHeader.rewind();
 
-          final long chunkBeginMessageNumber = bufferHeader.getLong();
-          if (messageNumberToFind == chunkBeginMessageNumber)
-            // MESSAGE FOUND AS FIRST MESSAGE OF THE CHUNK
-            return (long) (chunkId * CHUNK_SIZE);
-          else if (messageNumberToFind > chunkBeginMessageNumber)
-            // CHUNK FOUND
-            break;
+        final long chunkBeginMessageNumber = bufferHeader.getLong();
+        if (messageNumberToFind == chunkBeginMessageNumber)
+          // MESSAGE FOUND AS FIRST MESSAGE OF THE CHUNK
+          return chunkId * CHUNK_SIZE;
+        else if (messageNumberToFind > chunkBeginMessageNumber)
+          // CHUNK FOUND
+          break;
 
-          --chunkId;
-        }
-
-        final long fileSize = searchChannel.size();
-
-        for (long pos = 0; pos < fileSize; ) {
-          bufferHeader.clear();
-          searchChannel.read(bufferHeader, pos);
-          bufferHeader.rewind();
-
-          final long messageNumber = bufferHeader.getLong();
-          if (messageNumber == messageNumberToFind)
-            // FOUND
-            return pos + ((long) chunkId * CHUNK_SIZE);
-
-          if (messageNumber > messageNumberToFind)
-            // NOT IN LOG ANYMORE
-            return -1l;
-
-          final int contentLength = bufferHeader.getInt();
-
-          pos += BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE;
-        }
-
-        return -1l;
+        --chunkId;
       }
+
+      final long fileSize = searchChannel.size();
+
+      for (long pos = 0; pos < fileSize; ) {
+        bufferHeader.clear();
+        searchChannel.read(bufferHeader, pos);
+        bufferHeader.rewind();
+
+        final long messageNumber = bufferHeader.getLong();
+        if (messageNumber == messageNumberToFind)
+          // FOUND
+          return pos + (chunkId * CHUNK_SIZE);
+
+        if (messageNumber > messageNumberToFind)
+          // NOT IN LOG ANYMORE
+          return -1L;
+
+        final int contentLength = bufferHeader.getInt();
+
+        pos += BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE;
+      }
+
+      return -1L;
     });
   }
 
@@ -267,70 +247,67 @@ public class ReplicationLogFile extends LockContext {
   }
 
   public Pair<ReplicationMessage, Long> getMessage(final long positionInFile) {
-    return (Pair<ReplicationMessage, Long>) executeInLock(new Callable<Object>() {
-      @Override
-      public Object call() throws Exception {
-        if (positionInFile < 0)
-          throw new ReplicationLogException("Invalid position (" + positionInFile + ") in replication log file of size " + getSize());
+    return (Pair<ReplicationMessage, Long>) executeInLock(() -> {
+      if (positionInFile < 0)
+        throw new ReplicationLogException("Invalid position (" + positionInFile + ") in replication log file of size " + getSize());
 
-        if (positionInFile > (searchChannel.size() - BUFFER_HEADER_SIZE - BUFFER_FOOTER_SIZE) + (chunkNumber * CHUNK_SIZE))
-          throw new ReplicationLogException("Invalid position (" + positionInFile + ") in replication log file of size " + getSize());
+      if (positionInFile > (searchChannel.size() - BUFFER_HEADER_SIZE - BUFFER_FOOTER_SIZE) + (chunkNumber * CHUNK_SIZE))
+        throw new ReplicationLogException("Invalid position (" + positionInFile + ") in replication log file of size " + getSize());
 
-        final int chunkId = (int) (positionInFile / CHUNK_SIZE);
-        if (!openChunk(chunkId))
-          throw new ReplicationLogException("Cannot find replication log file with chunk id " + chunkId);
+      final int chunkId = (int) (positionInFile / CHUNK_SIZE);
+      if (!openChunk(chunkId))
+        throw new ReplicationLogException("Cannot find replication log file with chunk id " + chunkId);
 
-        final long posInChunk = positionInFile % CHUNK_SIZE;
+      final long posInChunk = positionInFile % CHUNK_SIZE;
 
-        // READ THE HEADER
-        bufferHeader.clear();
-        searchChannel.read(bufferHeader, posInChunk);
-        bufferHeader.rewind();
+      // READ THE HEADER
+      bufferHeader.clear();
+      searchChannel.read(bufferHeader, posInChunk);
+      bufferHeader.rewind();
 
-        final long messageNumber = bufferHeader.getLong();
-        final int contentLength = bufferHeader.getInt();
+      final long messageNumber = bufferHeader.getLong();
+      final int contentLength = bufferHeader.getInt();
 
 //        LogManager.instance()
 //            .log(this, Level.FINE, "Read log message chunk=%d pos=%d msgNumber=%d length=%d chunkSize=%d", null, chunkId, posInChunk, messageNumber,
 //                contentLength, searchChannel.size());
 
-        // READ THE PAYLOAD
-        final ByteBuffer bufferPayload = ByteBuffer.allocate(contentLength);
-        searchChannel.read(bufferPayload, posInChunk + BUFFER_HEADER_SIZE);
+      // READ THE PAYLOAD
+      final ByteBuffer bufferPayload = ByteBuffer.allocate(contentLength);
+      searchChannel.read(bufferPayload, posInChunk + BUFFER_HEADER_SIZE);
 
-        // READ THE FOOTER
-        bufferFooter.clear();
-        searchChannel.read(bufferFooter, posInChunk + BUFFER_HEADER_SIZE + contentLength);
-        bufferFooter.rewind();
+      // READ THE FOOTER
+      bufferFooter.clear();
+      searchChannel.read(bufferFooter, posInChunk + BUFFER_HEADER_SIZE + contentLength);
+      bufferFooter.rewind();
 
-        final int entrySize = bufferFooter.getInt();
-        final long magicNumber = bufferFooter.getLong();
+      bufferFooter.getInt(); // ENTRY-SIZE
+      final long magicNumber = bufferFooter.getLong();
 
-        if (magicNumber != MAGIC_NUMBER)
-          throw new ReplicationLogException("Corrupted replication log file at position " + positionInFile);
+      if (magicNumber != MAGIC_NUMBER)
+        throw new ReplicationLogException("Corrupted replication log file at position " + positionInFile);
 
-        final long nextPos;
-        if (posInChunk + BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE >= searchChannel.size())
-          // END OF CHUNK, SET NEXT POSITION AT THE BEGINNING OF THE NEXT CHUNK
-          nextPos = (chunkId + 1L) * CHUNK_SIZE;
-        else
-          nextPos = positionInFile + BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE;
+      final long nextPos;
+      if (posInChunk + BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE >= searchChannel.size())
+        // END OF CHUNK, SET NEXT POSITION AT THE BEGINNING OF THE NEXT CHUNK
+        nextPos = (chunkId + 1L) * CHUNK_SIZE;
+      else
+        nextPos = positionInFile + BUFFER_HEADER_SIZE + contentLength + BUFFER_FOOTER_SIZE;
 
-        return new Pair<>(new ReplicationMessage(messageNumber, new Binary((ByteBuffer) bufferPayload.rewind())), nextPos);
-      }
+      return new Pair<>(new ReplicationMessage(messageNumber, new Binary(bufferPayload.rewind())), nextPos);
     });
   }
 
   public boolean checkMessageOrder(final ReplicationMessage message) {
     if (lastMessageNumber > -1) {
       if (message.messageNumber < lastMessageNumber) {
-        serverLogger.log(this, Level.WARNING, "Wrong sequence in message numbers. Last was %d and now receiving %d. Skip saving this entry (threadId=%d)",
+        LogManager.instance().log(this, Level.WARNING, "Wrong sequence in message numbers. Last was %d and now receiving %d. Skip saving this entry (threadId=%d)",
             lastMessageNumber, message.messageNumber, Thread.currentThread().getId());
         return false;
       }
 
       if (message.messageNumber != lastMessageNumber + 1) {
-        serverLogger.log(this, Level.WARNING, "Found a jump (%d) in message numbers. Last was %d and now receiving %d. Skip saving this entry (threadId=%d)",
+        LogManager.instance().log(this, Level.WARNING, "Found a jump (%d) in message numbers. Last was %d and now receiving %d. Skip saving this entry (threadId=%d)",
             (message.messageNumber - lastMessageNumber), lastMessageNumber, message.messageNumber, Thread.currentThread().getId());
 
         return false;
@@ -340,56 +317,56 @@ public class ReplicationLogFile extends LockContext {
   }
 
   public ReplicationMessage getLastMessage() {
-    return (ReplicationMessage) executeInLock(new Callable<Object>() {
-      @Override
-      public Object call() throws Exception {
-        final long pos = lastChunkChannel.size();
-        if (pos == 0)
-          // EMPTY FILE
-          return null;
+    return (ReplicationMessage) executeInLock(() -> {
+      if (lastChunkChannel == null)
+        return null;
 
-        if (pos < BUFFER_HEADER_SIZE + BUFFER_FOOTER_SIZE) {
-          // TODO: SCAN FROM THE HEAD
-          throw new ReplicationLogException("Invalid position (" + pos + ") in replication log file of size " + lastChunkChannel.size());
-        }
+      final long pos = lastChunkChannel.size();
+      if (pos == 0)
+        // EMPTY FILE
+        return null;
 
-        // READ THE FOOTER
-        bufferFooter.clear();
-        lastChunkChannel.read(bufferFooter, pos - BUFFER_FOOTER_SIZE);
-        bufferFooter.rewind();
-
-        final int entrySize = bufferFooter.getInt();
-        final long magicNumber = bufferFooter.getLong();
-
-        if (magicNumber != MAGIC_NUMBER)
-          throw new ReplicationLogException("Corrupted replication log file");
-
-        // READ THE HEADER
-        bufferHeader.clear();
-        lastChunkChannel.read(bufferHeader, pos - entrySize);
-        bufferHeader.rewind();
-
-        final long messageNumber = bufferHeader.getLong();
-        final int contentLength = bufferHeader.getInt();
-
-        // READ THE PAYLOAD
-        final ByteBuffer bufferPayload = ByteBuffer.allocate(contentLength);
-        lastChunkChannel.read(bufferPayload, pos - entrySize + BUFFER_HEADER_SIZE);
-
-        return new ReplicationMessage(messageNumber, new Binary((ByteBuffer) bufferPayload.rewind()));
+      if (pos < BUFFER_HEADER_SIZE + BUFFER_FOOTER_SIZE) {
+        // TODO: SCAN FROM THE HEAD
+        throw new ReplicationLogException("Invalid position (" + pos + ") in replication log file of size " + lastChunkChannel.size());
       }
+
+      // READ THE FOOTER
+      bufferFooter.clear();
+      lastChunkChannel.read(bufferFooter, pos - BUFFER_FOOTER_SIZE);
+      bufferFooter.rewind();
+
+      final int entrySize = bufferFooter.getInt();
+      final long magicNumber = bufferFooter.getLong();
+
+      if (magicNumber != MAGIC_NUMBER)
+        throw new ReplicationLogException("Corrupted replication log file");
+
+      // READ THE HEADER
+      bufferHeader.clear();
+      lastChunkChannel.read(bufferHeader, pos - entrySize);
+      bufferHeader.rewind();
+
+      final long messageNumber = bufferHeader.getLong();
+      final int contentLength = bufferHeader.getInt();
+
+      // READ THE PAYLOAD
+      final ByteBuffer bufferPayload = ByteBuffer.allocate(contentLength);
+      lastChunkChannel.read(bufferPayload, pos - entrySize + BUFFER_HEADER_SIZE);
+
+      return new ReplicationMessage(messageNumber, new Binary(bufferPayload.rewind()));
     });
   }
 
   public long getSize() {
-    return (Long) executeInLock(new Callable<Object>() {
+    return (Long) executeInLock(new Callable<>() {
       @Override
-      public Object call() throws Exception {
+      public Object call() {
         try {
           return lastChunkChannel.size() + (chunkNumber * CHUNK_SIZE);
         } catch (IOException e) {
           LogManager.instance().log(this, Level.SEVERE, "Error on computing file size for last chunk (%d) in replication log '%s'", e, chunkNumber, filePath);
-          return 0l;
+          return 0L;
         }
       }
     });
@@ -440,7 +417,7 @@ public class ReplicationLogFile extends LockContext {
 
   private void openLastFileChunk(final File logFile) throws FileNotFoundException {
     final String prefix = logFile.getName() + ".";
-    final List<File> fileChunks = Arrays.asList(logFile.getParentFile().listFiles((f) -> f.getName().startsWith(prefix)));
+    final List<File> fileChunks = Arrays.asList(logFile.getParentFile().listFiles(f -> f.getName().startsWith(prefix)));
     fileChunks.sort(LOG_COMPARATOR);
 
     totalArchivedChunks = fileChunks.isEmpty() ? 0 : fileChunks.size() - 1;

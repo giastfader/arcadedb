@@ -1,39 +1,32 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.serializer;
 
 import com.arcadedb.database.Binary;
 import com.arcadedb.database.Document;
 import com.arcadedb.database.RID;
-import com.arcadedb.engine.MurmurHash;
 import com.arcadedb.exception.DatabaseMetadataException;
 import com.arcadedb.query.sql.executor.Result;
 import com.arcadedb.schema.Type;
 
-import java.math.BigDecimal;
-import java.util.Collection;
-import java.util.Date;
-import java.util.Map;
-import java.util.UUID;
+import java.math.*;
+import java.util.*;
 
 public class BinaryTypes {
   public final static byte TYPE_NULL              = 0;
@@ -60,18 +53,21 @@ public class BinaryTypes {
   public static byte getTypeFromValue(final Object value) {
     final byte type;
 
+    // ORDERED BY THE MOST COMMON FIRST
     if (value == null)
       type = TYPE_NULL;
     else if (value instanceof String)
       type = TYPE_STRING;
-    else if (value instanceof Byte)
-      type = TYPE_BYTE;
-    else if (value instanceof Short)
-      type = TYPE_SHORT;
     else if (value instanceof Integer)
       type = TYPE_INT;
     else if (value instanceof Long)
       type = TYPE_LONG;
+    else if (value instanceof RID)
+      type = TYPE_COMPRESSED_RID;
+    else if (value instanceof Byte)
+      type = TYPE_BYTE;
+    else if (value instanceof Short)
+      type = TYPE_SHORT;
     else if (value instanceof Float)
       type = TYPE_FLOAT;
     else if (value instanceof Double)
@@ -84,8 +80,6 @@ public class BinaryTypes {
       type = TYPE_BOOLEAN;
     else if (value instanceof byte[])
       type = TYPE_BINARY;
-    else if (value instanceof RID)
-      type = TYPE_COMPRESSED_RID;
     else if (value instanceof UUID)
       type = TYPE_UUID;
     else if (value instanceof Map)
@@ -233,53 +227,5 @@ public class BinaryTypes {
       // UNKNOWN
       return null;
     }
-  }
-
-  public static int getHash32(final Object[] keys) {
-    return getHash32(keys, keys.length);
-  }
-
-  public static int getHash32(final Object[] keys, final int keyCount) {
-    int hash = 0;
-
-    for (int i = 0; i < keyCount; ++i)
-      hash += getHash32(keys[i]);
-
-    return hash;
-  }
-
-  public static int getHash32(final Object key) {
-    final Class<? extends Object> typez = key.getClass();
-
-    if (typez == String.class)
-      return MurmurHash.hash32((String) key);
-    else if (typez == byte[].class)
-      return MurmurHash.hash32(((byte[]) key), ((byte[]) key).length);
-
-    return key.hashCode();
-  }
-
-  public static long getHash64(final Object[] keys) {
-    return getHash64(keys, keys.length);
-  }
-
-  public static long getHash64(final Object[] keys, final int keyCount) {
-    long hash = 0;
-
-    for (int i = 0; i < keyCount; ++i)
-      hash += getHash64(keys[i]);
-
-    return hash;
-  }
-
-  public static long getHash64(final Object key) {
-    final Class<? extends Object> typez = key.getClass();
-
-    if (typez == String.class)
-      return MurmurHash.hash64((String) key);
-    else if (typez == byte[].class)
-      return MurmurHash.hash64(((byte[]) key), 0, ((byte[]) key).length);
-
-    return key.hashCode();
   }
 }

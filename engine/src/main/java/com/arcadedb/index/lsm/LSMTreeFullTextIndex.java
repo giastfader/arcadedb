@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index.lsm;
 
 import com.arcadedb.database.DatabaseInternal;
@@ -27,7 +24,13 @@ import com.arcadedb.database.RID;
 import com.arcadedb.engine.PaginatedComponent;
 import com.arcadedb.engine.PaginatedComponentFactory;
 import com.arcadedb.engine.PaginatedFile;
-import com.arcadedb.index.*;
+import com.arcadedb.index.Index;
+import com.arcadedb.index.IndexCursor;
+import com.arcadedb.index.IndexCursorEntry;
+import com.arcadedb.index.IndexException;
+import com.arcadedb.index.IndexInternal;
+import com.arcadedb.index.TempIndexCursor;
+import com.arcadedb.index.TypeIndex;
 import com.arcadedb.schema.EmbeddedSchema;
 import com.arcadedb.schema.Schema;
 import com.arcadedb.schema.Type;
@@ -35,10 +38,11 @@ import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.json.JSONObject;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.*;
 
 /**
  * Full Text index implementation based on LSM-Tree index.
@@ -60,14 +64,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * the query result will be the TreeMap ordered by score, so if the query has a limit, only the first X items will be returned ordered by score desc
  */
 public class LSMTreeFullTextIndex implements Index, IndexInternal {
-  private LSMTreeIndex underlyingIndex;
-  private Analyzer     analyzer;
+  private final LSMTreeIndex underlyingIndex;
+  private final Analyzer     analyzer;
+  private       TypeIndex    typeIndex;
 
   public static class IndexFactoryHandler implements com.arcadedb.index.IndexFactoryHandler {
     @Override
     public IndexInternal create(final DatabaseInternal database, final String name, final boolean unique, final String filePath, final PaginatedFile.MODE mode,
-        final byte[] keyTypes, final int pageSize, final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, final BuildIndexCallback callback)
-        throws IOException {
+        final Type[] keyTypes, final int pageSize, final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, final BuildIndexCallback callback) {
       return new LSMTreeFullTextIndex(database, name, filePath, mode, pageSize, callback);
     }
   }
@@ -75,8 +79,8 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
   public static class PaginatedComponentFactoryHandlerNotUnique implements PaginatedComponentFactory.PaginatedComponentFactoryHandler {
     @Override
     public PaginatedComponent createOnLoad(final DatabaseInternal database, final String name, final String filePath, final int id,
-        final PaginatedFile.MODE mode, final int pageSize) throws IOException {
-      final LSMTreeFullTextIndex mainIndex = new LSMTreeFullTextIndex(database, name, filePath, id, mode, pageSize);
+        final PaginatedFile.MODE mode, final int pageSize, int version) throws IOException {
+      final LSMTreeFullTextIndex mainIndex = new LSMTreeFullTextIndex(database, name, filePath, id, mode, pageSize, version);
       return mainIndex.underlyingIndex.mutable;
     }
   }
@@ -86,22 +90,17 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
    */
   public LSMTreeFullTextIndex(final DatabaseInternal database, final String name, final String filePath, final PaginatedFile.MODE mode, final int pageSize,
       final BuildIndexCallback callback) {
-    try {
-      analyzer = new StandardAnalyzer();
-      underlyingIndex = new LSMTreeIndex(database, name, false, filePath, mode, new byte[] { Type.STRING.getBinaryType() }, pageSize,
-          LSMTreeIndexAbstract.NULL_STRATEGY.ERROR);
-    } catch (IOException e) {
-      throw new IndexException("Cannot create search engine (error=" + e + ")", e);
-    }
+    analyzer = new StandardAnalyzer();
+    underlyingIndex = new LSMTreeIndex(database, name, false, filePath, mode, new Type[] { Type.STRING }, pageSize, LSMTreeIndexAbstract.NULL_STRATEGY.ERROR);
   }
 
   /**
    * Loading time.
    */
   public LSMTreeFullTextIndex(final DatabaseInternal database, final String name, final String filePath, final int fileId, final PaginatedFile.MODE mode,
-      final int pageSize) {
+      final int pageSize, final int version) {
     try {
-      underlyingIndex = new LSMTreeIndex(database, name, false, filePath, fileId, mode, pageSize);
+      underlyingIndex = new LSMTreeIndex(database, name, false, filePath, fileId, mode, pageSize, version);
     } catch (IOException e) {
       throw new IndexException("Cannot create search engine (error=" + e + ")", e);
     }
@@ -140,13 +139,10 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
       list.add(new IndexCursorEntry(keys, entry.getKey(), entry.getValue().get()));
 
     if (list.size() > 1)
-      Collections.sort(list, new Comparator<IndexCursorEntry>() {
-        @Override
-        public int compare(final IndexCursorEntry o1, final IndexCursorEntry o2) {
-          if (o1.score == o2.score)
-            return 0;
-          return o1.score < o2.score ? -1 : 1;
-        }
+      list.sort((o1, o2) -> {
+        if (o1.score == o2.score)
+          return 0;
+        return o1.score < o2.score ? -1 : 1;
       });
 
     return new TempIndexCursor(list);
@@ -171,6 +167,15 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
     final List<String> keywords = analyzeText(analyzer, keys);
     for (String k : keywords)
       underlyingIndex.remove(new String[] { k }, rid);
+  }
+
+  @Override
+  public JSONObject toJSON() {
+    final JSONObject json = new JSONObject();
+    json.put("bucket", underlyingIndex.mutable.getDatabase().getSchema().getBucketById(getAssociatedBucketId()).getName());
+    json.put("properties", getPropertyNames());
+    json.put("nullStrategy", getNullStrategy());
+    return json;
   }
 
   @Override
@@ -204,7 +209,7 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
   }
 
   @Override
-  public String[] getPropertyNames() {
+  public List<String> getPropertyNames() {
     return underlyingIndex.getPropertyNames();
   }
 
@@ -255,6 +260,16 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
   }
 
   @Override
+  public Type[] getKeyTypes() {
+    return underlyingIndex.getKeyTypes();
+  }
+
+  @Override
+  public byte[] getBinaryKeyTypes() {
+    return underlyingIndex.getBinaryKeyTypes();
+  }
+
+  @Override
   public int getAssociatedBucketId() {
     return underlyingIndex.getAssociatedBucketId();
   }
@@ -267,6 +282,26 @@ public class LSMTreeFullTextIndex implements Index, IndexInternal {
   @Override
   public boolean isAutomatic() {
     return underlyingIndex.propertyNames != null;
+  }
+
+  @Override
+  public int getPageSize() {
+    return underlyingIndex.getPageSize();
+  }
+
+  @Override
+  public List<Integer> getFileIds() {
+    return underlyingIndex.getFileIds();
+  }
+
+  @Override
+  public void setTypeIndex(final TypeIndex typeIndex) {
+    this.typeIndex = typeIndex;
+  }
+
+  @Override
+  public TypeIndex getTypeIndex() {
+    return typeIndex;
   }
 
   @Override

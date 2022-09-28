@@ -1,42 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 /**
  * Created by luigidellaquila on 08/08/16.
  */
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.*;
+import java.util.stream.*;
 
 /**
  * @author Luigi Dell'Aquila (luigi.dellaquila-(at)-gmail.com)
  */
 public class ScriptExecutionPlan implements InternalExecutionPlan {
 
-  private       String                location;
   private final CommandContext        ctx;
   private       boolean               executed    = false;
   protected     List<ScriptLineStep>  steps       = new ArrayList<>();
@@ -61,12 +54,12 @@ public class ScriptExecutionPlan implements InternalExecutionPlan {
 
   @Override
   public ResultSet fetchNext(int n) {
-    dexecute(n);
+    doExecute(n);
     return new ResultSet() {
-      private int totalFetched = 0;
 
       @Override
       public boolean hasNext() {
+        int totalFetched = 0;
         return finalResult.hasNext() && totalFetched < n;
       }
 
@@ -95,20 +88,22 @@ public class ScriptExecutionPlan implements InternalExecutionPlan {
     };
   }
 
-  private void dexecute(int n) {
+  private void doExecute(int n) {
     if (!executed) {
       executeUntilReturn();
       executed = true;
       finalResult = new InternalResultSet();
-      ResultSet partial = lastStep.syncPull(ctx, n);
-      while (partial.hasNext()) {
+      if (lastStep != null) {
+        ResultSet partial = lastStep.syncPull(ctx, n);
         while (partial.hasNext()) {
-          ((InternalResultSet) finalResult).add(partial.next());
+          while (partial.hasNext()) {
+            ((InternalResultSet) finalResult).add(partial.next());
+          }
+          partial = lastStep.syncPull(ctx, n);
         }
-        partial = lastStep.syncPull(ctx, n);
-      }
-      if (lastStep instanceof ScriptLineStep) {
-        ((InternalResultSet) finalResult).setPlan(((ScriptLineStep) lastStep).plan);
+        if (lastStep instanceof ScriptLineStep) {
+          ((InternalResultSet) finalResult).setPlan(((ScriptLineStep) lastStep).plan);
+        }
       }
     }
   }
@@ -160,7 +155,7 @@ public class ScriptExecutionPlan implements InternalExecutionPlan {
 
   @Override
   public long getCost() {
-    return 0l;
+    return 0L;
   }
 
   @Override
@@ -190,26 +185,26 @@ public class ScriptExecutionPlan implements InternalExecutionPlan {
   public ExecutionStepInternal executeUntilReturn() {
     if (steps.size() > 0) {
       lastStep = steps.get(steps.size() - 1);
-    }
-    for (int i = 0; i < steps.size() - 1; i++) {
-      ScriptLineStep step = steps.get(i);
-      if (step.containsReturn()) {
-        ExecutionStepInternal returnStep = step.executeUntilReturn(ctx);
-        if (returnStep != null) {
-          lastStep = returnStep;
-          return lastStep;
+      for (int i = 0; i < steps.size() - 1; i++) {
+        ScriptLineStep step = steps.get(i);
+        if (step.containsReturn()) {
+          ExecutionStepInternal returnStep = step.executeUntilReturn(ctx);
+          if (returnStep != null) {
+            lastStep = returnStep;
+            return lastStep;
+          }
         }
-      }
-      ResultSet lastResult = step.syncPull(ctx, 100);
+        ResultSet lastResult = step.syncPull(ctx, 100);
 
-      while (lastResult.hasNext()) {
         while (lastResult.hasNext()) {
-          lastResult.next();
+          while (lastResult.hasNext()) {
+            lastResult.next();
+          }
+          lastResult = step.syncPull(ctx, 100);
         }
-        lastResult = step.syncPull(ctx, 100);
       }
+      this.lastStep = steps.get(steps.size() - 1);
     }
-    this.lastStep = steps.get(steps.size() - 1);
     return lastStep;
   }
 
@@ -220,8 +215,7 @@ public class ScriptExecutionPlan implements InternalExecutionPlan {
    * @return
    */
   public ExecutionStepInternal executeFull() {
-    for (int i = 0; i < steps.size(); i++) {
-      ScriptLineStep step = steps.get(i);
+    for (ScriptLineStep step : steps) {
       if (step.containsReturn()) {
         ExecutionStepInternal returnStep = step.executeUntilReturn(ctx);
         if (returnStep != null) {

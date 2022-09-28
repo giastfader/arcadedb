@@ -1,36 +1,34 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package performance;
 
+import com.arcadedb.NullLogger;
 import com.arcadedb.TestHelper;
 import com.arcadedb.database.MutableDocument;
 import com.arcadedb.database.async.ErrorCallback;
 import com.arcadedb.engine.Bucket;
 import com.arcadedb.engine.WALFile;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.log.Logger;
 import com.arcadedb.schema.DocumentType;
+import com.arcadedb.schema.Schema;
 
-import java.util.logging.Level;
+import java.util.logging.*;
 
 public class PerformanceInsertIndexTest extends TestHelper {
   private static final int    TOT       = 100_000_000;
@@ -53,37 +51,24 @@ public class PerformanceInsertIndexTest extends TestHelper {
 
   @Override
   protected String getPerformanceProfile() {
-    LogManager.instance().setLogger(new Logger() {
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object arg1, Object arg2, Object arg3,
-          Object arg4, Object arg5, Object arg6, Object arg7, Object arg8, Object arg9, Object arg10, Object arg11, Object arg12, Object arg13, Object arg14,
-          Object arg15, Object arg16, Object arg17) {
-      }
-
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object... args) {
-      }
-
-      @Override
-      public void flush() {
-      }
-    });
+    LogManager.instance().setLogger(NullLogger.INSTANCE);
 
     return "high-performance";
   }
 
   private void run() {
+    database.setReadYourWrites(false);
     if (!database.getSchema().existsType(TYPE_NAME)) {
       database.begin();
 
       final DocumentType type = database.getSchema().createDocumentType(TYPE_NAME, PARALLEL, Bucket.DEF_PAGE_SIZE);
 
-      //type.createProperty("id", Integer.class);
+      type.createProperty("id", Long.class);
       type.createProperty("area", String.class);
       type.createProperty("age", Byte.class);
       type.createProperty("active", Byte.class);
 
-//      database.getSchema().createTypeIndex(SchemaImpl.INDEX_TYPE.LSM_TREE, false, TYPE_NAME, new String[] { "id" }, 5000000);
+      database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, TYPE_NAME, new String[] { "id" }, 5000000);
 
       database.commit();
 

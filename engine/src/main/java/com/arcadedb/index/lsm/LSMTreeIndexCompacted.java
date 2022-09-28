@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index.lsm;
 
 import com.arcadedb.database.Binary;
@@ -33,9 +30,9 @@ import com.arcadedb.exception.DatabaseOperationException;
 import com.arcadedb.index.IndexCursorEntry;
 import com.arcadedb.log.LogManager;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 import static com.arcadedb.database.Binary.BYTE_SERIALIZED_SIZE;
 import static com.arcadedb.database.Binary.INT_SERIALIZED_SIZE;
@@ -52,22 +49,22 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
    */
   public LSMTreeIndexCompacted(final LSMTreeIndex mainIndex, final DatabaseInternal database, final String name, final boolean unique, final String filePath,
       final byte[] keyTypes, final int pageSize) throws IOException {
-    super(mainIndex, database, name, unique, filePath, unique ? UNIQUE_INDEX_EXT : NOTUNIQUE_INDEX_EXT, keyTypes, pageSize);
+    super(mainIndex, database, name, unique, filePath, unique ? UNIQUE_INDEX_EXT : NOTUNIQUE_INDEX_EXT, keyTypes, pageSize,
+        LSMTreeIndexMutable.CURRENT_VERSION);
   }
 
   /**
    * Called at load time (1st page only).
    */
   protected LSMTreeIndexCompacted(final LSMTreeIndex mainIndex, final DatabaseInternal database, final String name, final boolean unique, final String filePath,
-      final int id, final PaginatedFile.MODE mode, final int pageSize) throws IOException {
-    super(mainIndex, database, name, unique, filePath, id, mode, pageSize);
+      final int id, final PaginatedFile.MODE mode, final int pageSize, final int version) throws IOException {
+    super(mainIndex, database, name, unique, filePath, id, mode, pageSize, version);
   }
 
   public Set<IndexCursorEntry> get(final Object[] keys, final int limit) {
-    if (nullStrategy == NULL_STRATEGY.ERROR)
-      checkForNulls(keys);
+    checkForNulls(keys);
 
-    final Object[] convertedKeys = convertKeys(keys, keyTypes);
+    final Object[] convertedKeys = convertKeys(keys, binaryKeyTypes);
     if (convertedKeys == null && nullStrategy == NULL_STRATEGY.SKIP)
       return Collections.emptySet();
 
@@ -86,22 +83,24 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
     }
   }
 
-  public MutablePage appendDuringCompaction(final Binary keyValueContent, MutablePage currentPage, TrackableBinary currentPageBuffer,
+  public MutablePage appendDuringCompaction(final Binary keyValueContent, MutablePage currentPage, final TrackableBinary currentPageBuffer,
       final int compactedPageNumberOfSeries, final Object[] keys, final RID[] rids) throws IOException, InterruptedException {
     if (keys == null)
       throw new IllegalArgumentException("Keys parameter is null");
 
+    TrackableBinary pageBuffer = currentPageBuffer;
+
     if (currentPage == null) {
       // CREATE A NEW PAGE
       currentPage = createNewPage(compactedPageNumberOfSeries);
-      currentPageBuffer = currentPage.getTrackable();
+      pageBuffer = currentPage.getTrackable();
     }
 
     int count = getCount(currentPage);
 
     int pageNum = currentPage.getPageId().getPageNumber();
 
-    final Object[] convertedKeys = convertKeys(keys, keyTypes);
+    final Object[] convertedKeys = convertKeys(keys, binaryKeyTypes);
 
     writeEntry(keyValueContent, convertedKeys, rids);
 
@@ -109,10 +108,11 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
 
     if (keyValueFreePosition - (getHeaderSize(pageNum) + (count * INT_SERIALIZED_SIZE) + INT_SERIALIZED_SIZE) < keyValueContent.size()) {
       // NO SPACE LEFT, CREATE A NEW PAGE AND FLUSH TO THE DATABASE THE CURRENT ONE (NO WAL)
-      database.getPageManager().updatePage(currentPage, true, false);
+      database.getPageManager().updatePage(currentPage, true);
+      database.getPageManager().flushPages(Collections.singletonList(currentPage), true);
 
       currentPage = createNewPage(compactedPageNumberOfSeries);
-      currentPageBuffer = currentPage.getTrackable();
+      pageBuffer = currentPage.getTrackable();
       pageNum = currentPage.getPageId().getPageNumber();
       count = 0;
       keyValueFreePosition = currentPage.getMaxContentSize();
@@ -121,10 +121,10 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
     keyValueFreePosition -= keyValueContent.size();
 
     // WRITE KEY/VALUE PAIR CONTENT
-    currentPageBuffer.putByteArray(keyValueFreePosition, keyValueContent.toByteArray());
+    pageBuffer.putByteArray(keyValueFreePosition, keyValueContent.toByteArray());
 
     final int startPos = getHeaderSize(pageNum) + (count * INT_SERIALIZED_SIZE);
-    currentPageBuffer.putInt(startPos, keyValueFreePosition);
+    pageBuffer.putInt(startPos, keyValueFreePosition);
 
     setCount(currentPage, count + 1);
     setValuesFreePosition(currentPage, keyValueFreePosition);
@@ -183,9 +183,9 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
       currentPage.writeInt(pos, -1); // SUB-INDEX FILE ID
       pos += INT_SERIALIZED_SIZE;
 
-      currentPage.writeByte(pos++, (byte) keyTypes.length);
-      for (int i = 0; i < keyTypes.length; ++i)
-        currentPage.writeByte(pos++, keyTypes[i]);
+      currentPage.writeByte(pos++, (byte) binaryKeyTypes.length);
+      for (int i = 0; i < binaryKeyTypes.length; ++i)
+        currentPage.writeByte(pos++, binaryKeyTypes[i]);
     }
 
     setPageCount(txPageCounter + 1);
@@ -212,8 +212,7 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
       return Collections.emptyList();
     }
 
-    checkForNulls(fromKeys);
-    final Object[] convertedFromKeys = convertKeys(fromKeys, keyTypes);
+    final Object[] convertedFromKeys = convertKeys(fromKeys, binaryKeyTypes);
 
     final List<LSMTreeIndexUnderlyingCompactedSeriesCursor> iterators = new ArrayList<>();
 
@@ -285,11 +284,11 @@ public class LSMTreeIndexCompacted extends LSMTreeIndexAbstract {
               ++posInPage;
           }
 
-          iterator = new LSMTreeIndexUnderlyingCompactedSeriesCursor(this, startingPageNumber, lastPageNumber, keyTypes, ascendingOrder, posInPage);
+          iterator = new LSMTreeIndexUnderlyingCompactedSeriesCursor(this, startingPageNumber, lastPageNumber, binaryKeyTypes, ascendingOrder, posInPage);
         }
 
       } else
-        iterator = new LSMTreeIndexUnderlyingCompactedSeriesCursor(this, startingPageNumber, lastPageNumber, keyTypes, ascendingOrder, -1);
+        iterator = new LSMTreeIndexUnderlyingCompactedSeriesCursor(this, startingPageNumber, lastPageNumber, binaryKeyTypes, ascendingOrder, -1);
 
       if (iterator != null)
         iterators.add(iterator);

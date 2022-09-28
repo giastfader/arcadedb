@@ -1,26 +1,24 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
+import com.arcadedb.exception.ValidationException;
 import com.arcadedb.schema.DocumentType;
 import com.arcadedb.schema.Property;
 import com.arcadedb.schema.Type;
@@ -35,12 +33,12 @@ import java.util.*;
  * @author Luca Garulli
  */
 public class MutableDocument extends BaseDocument implements RecordInternal {
-  private   Map<String, Object> map;
+  protected Map<String, Object> map;
   protected boolean             dirty = false;
 
   protected MutableDocument(final Database database, final DocumentType type, final RID rid) {
     super(database, type, rid, null);
-    this.map = new LinkedHashMap<>(type.getPropertyNames().size());
+    this.map = new LinkedHashMap<>();
   }
 
   protected MutableDocument(final Database database, final DocumentType type, final RID rid, final Binary buffer) {
@@ -48,63 +46,94 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
     buffer.position(buffer.position() + 1); // SKIP RECORD TYPE
   }
 
-  public void merge(final Map<String, Object> other) {
-    for (String p : other.keySet())
-      set(p, other.get(p));
+  public synchronized void merge(final Map<String, Object> other) {
+    for (Map.Entry<String, Object> entry : other.entrySet())
+      set(entry.getKey(), entry.getValue());
   }
 
-  public boolean isDirty() {
+  public synchronized boolean isDirty() {
     return dirty;
   }
 
   @Override
-  public void setBuffer(final Binary buffer) {
+  public synchronized void setBuffer(final Binary buffer) {
     super.setBuffer(buffer);
     dirty = false;
     //map = null; // AVOID RESETTING HERE FOR INDEXES THAT CAN LOOKUP UP FOR FIELDS CAUSING AN UNMARSHALLING
   }
 
   @Override
-  public void unsetDirty() {
+  public synchronized void unsetDirty() {
     map = null;
     dirty = false;
   }
 
-  public void fromMap(final Map<String, Object> map) {
+  public synchronized MutableDocument fromMap(final Map<String, Object> map) {
     this.map = new LinkedHashMap<>(map.size());
-    for (Map.Entry<String, Object> entry : map.entrySet())
-      this.map.put(entry.getKey(), convertValueToSchemaType(entry.getKey(), entry.getValue(), type));
+    for (Map.Entry<String, Object> entry : map.entrySet()) {
+      final String key = entry.getKey();
+      if (key.startsWith("@"))
+        // SKIP METADATA
+        continue;
+      this.map.put(key, convertValueToSchemaType(key, entry.getValue(), type));
+    }
 
     dirty = true;
+    return this;
   }
 
   @Override
-  public Map<String, Object> toMap() {
+  public Map<String, Object> propertiesAsMap() {
     checkForLazyLoadingProperties();
-    return new HashMap<>(map);
-  }
-
-  public void fromJSON(final JSONObject json) {
-    fromMap(new JSONSerializer(database).json2map(json));
+    return Collections.unmodifiableMap(map);
   }
 
   @Override
-  public JSONObject toJSON() {
+  public synchronized Map<String, Object> toMap() {
     checkForLazyLoadingProperties();
-    final JSONObject result = new JSONSerializer(database).map2json(map);
+    final Map<String, Object> result = new HashMap<>(map);
+    result.put("@cat", "d");
     result.put("@type", type.getName());
     if (getIdentity() != null)
       result.put("@rid", getIdentity().toString());
     return result;
   }
 
+  public synchronized MutableDocument fromJSON(final JSONObject json) {
+    return fromMap(new JSONSerializer(database).json2map(json));
+  }
+
   @Override
-  public boolean has(String propertyName) {
+  public synchronized JSONObject toJSON() {
+    checkForLazyLoadingProperties();
+    final JSONObject result = new JSONSerializer(database).map2json(map);
+    result.put("@cat", "d");
+    result.put("@type", type.getName());
+    if (getIdentity() != null)
+      result.put("@rid", getIdentity().toString());
+    return result;
+  }
+
+  /**
+   * Validates the document following the declared constraints defined in schema such as mandatory,
+   * notNull, min, max, regexp, etc. If the schema is not defined for the current class or there are
+   * not constraints then the validation is ignored.
+   *
+   * @throws ValidationException if the document breaks some validation constraints defined in the
+   *                             schema
+   * @see Property
+   */
+  public void validate() throws ValidationException {
+    DocumentValidator.validate(this);
+  }
+
+  @Override
+  public synchronized boolean has(String propertyName) {
     checkForLazyLoadingProperties();
     return map.containsKey(propertyName);
   }
 
-  public Object get(final String propertyName) {
+  public synchronized Object get(final String propertyName) {
     checkForLazyLoadingProperties();
     return map.get(propertyName);
   }
@@ -112,7 +141,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
   /**
    * Sets the property value in the document. If the property has been defined in the schema, the value is converted according to the property type.
    */
-  public MutableDocument set(final String name, Object value) {
+  public synchronized MutableDocument set(final String name, Object value) {
     checkForLazyLoadingProperties();
     dirty = true;
     value = setTransformValue(value, name);
@@ -125,9 +154,12 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
    *
    * @param properties Array containing pairs of name (String) and value (Object)
    */
-  public MutableDocument set(final Object... properties) {
+  public synchronized MutableDocument set(final Object... properties) {
+    if (properties == null || properties.length == 0)
+      throw new IllegalArgumentException("Empty list of properties");
+
     if (properties.length % 2 != 0)
-      throw new IllegalArgumentException("properties must be an even pair of key/values");
+      throw new IllegalArgumentException("Properties must be an even pair of key/values");
 
     checkForLazyLoadingProperties();
     dirty = true;
@@ -152,7 +184,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
    *
    * @return MutableEmbeddedDocument instance
    */
-  public MutableEmbeddedDocument newEmbeddedDocument(final String embeddedTypeName, final String propertyName) {
+  public synchronized MutableEmbeddedDocument newEmbeddedDocument(final String embeddedTypeName, final String propertyName) {
     final Object old = get(propertyName);
 
     final MutableEmbeddedDocument emb = database.newEmbeddedDocument(new EmbeddedModifierProperty(this, propertyName), embeddedTypeName);
@@ -160,6 +192,33 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
       ((Collection<EmbeddedDocument>) old).add(emb);
     else
       set(propertyName, emb);
+
+    return emb;
+  }
+
+  /**
+   * Creates a new embedded document attached to the current document. If the property name already exists, and it is a map, then the embedded document
+   * is added to the collection.
+   *
+   * @param embeddedTypeName Embedded type name
+   * @param propertyName     Current document's property name where the embedded document is stored
+   * @param mapKey           key for the map to assign the embedded document
+   *
+   * @return MutableEmbeddedDocument instance
+   */
+  public synchronized MutableEmbeddedDocument newEmbeddedDocument(final String embeddedTypeName, final String propertyName, final String mapKey) {
+    final Object old = get(propertyName);
+
+    final MutableEmbeddedDocument emb = database.newEmbeddedDocument(new EmbeddedModifierProperty(this, propertyName), embeddedTypeName);
+
+    if (old == null) {
+      final Map<String, EmbeddedDocument> embMap = new HashMap<>();
+      embMap.put(mapKey, emb);
+      set(propertyName, embMap);
+    } else if (old instanceof Map)
+      ((Map<String, EmbeddedDocument>) old).put(mapKey, emb);
+    else
+      throw new IllegalArgumentException("Property '" + propertyName + "' is '" + old.getClass() + "', but null or Map was expected");
 
     return emb;
   }
@@ -173,7 +232,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
    *
    * @return MutableEmbeddedDocument instance
    */
-  public MutableEmbeddedDocument newEmbeddedDocument(final String embeddedTypeName, final String propertyName, final Object propertyMapKey) {
+  public synchronized MutableEmbeddedDocument newEmbeddedDocument(final String embeddedTypeName, final String propertyName, final Object propertyMapKey) {
     final Object old = get(propertyName);
 
     if (old == null)
@@ -196,12 +255,16 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
    *
    * @param properties {@literal Map<String,Object>} containing pairs of name (String) and value (Object)
    */
-  public MutableDocument set(final Map<String, Object> properties) {
+  public synchronized MutableDocument set(final Map<String, Object> properties) {
     checkForLazyLoadingProperties();
     dirty = true;
 
     for (Map.Entry<String, Object> entry : properties.entrySet()) {
       final String propertyName = entry.getKey();
+      if (propertyName.startsWith("@"))
+        // SKIP METADATA
+        continue;
+
       final Object value = setTransformValue(entry.getValue(), propertyName);
       map.put(propertyName, convertValueToSchemaType(propertyName, value, type));
     }
@@ -209,13 +272,13 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
     return this;
   }
 
-  public Object remove(final String name) {
+  public synchronized Object remove(final String name) {
     checkForLazyLoadingProperties();
     dirty = true;
     return map.remove(name);
   }
 
-  public MutableDocument save() {
+  public synchronized MutableDocument save() {
     dirty = true;
     if (rid != null)
       database.updateRecord(this);
@@ -224,7 +287,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
     return this;
   }
 
-  public MutableDocument save(final String bucketName) {
+  public synchronized MutableDocument save(final String bucketName) {
     dirty = true;
     if (rid != null)
       throw new IllegalStateException("Cannot update a record in a custom bucket");
@@ -234,12 +297,12 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
   }
 
   @Override
-  public void setIdentity(final RID rid) {
+  public synchronized void setIdentity(final RID rid) {
     this.rid = rid;
   }
 
   @Override
-  public String toString() {
+  public synchronized String toString() {
     final StringBuilder result = new StringBuilder(256);
     if (rid != null)
       result.append(rid);
@@ -267,17 +330,17 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
   }
 
   @Override
-  public Set<String> getPropertyNames() {
+  public synchronized Set<String> getPropertyNames() {
     checkForLazyLoadingProperties();
     return map.keySet();
   }
 
-  public MutableDocument modify() {
+  public synchronized MutableDocument modify() {
     return this;
   }
 
   @Override
-  public void reload() {
+  public synchronized void reload() {
     dirty = false;
     map = null;
     buffer = null;
@@ -301,7 +364,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
     }
   }
 
-  private Object convertValueToSchemaType(final String name, final Object value, final DocumentType type) {
+  protected Object convertValueToSchemaType(final String name, final Object value, final DocumentType type) {
     if (value == null || value == JSONObject.NULL)
       return null;
 
@@ -323,12 +386,12 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
       if (!((EmbeddedDocument) value).getDatabase().getName().equals(database.getName())) {
         ((BaseDocument) value).buffer.rewind();
         final MutableDocument newRecord = (MutableDocument) database.getRecordFactory()
-            .newModifiableRecord(database, ((EmbeddedDocument) value).getType(), null, ((BaseDocument) value).buffer,
+            .newMutableRecord(database, ((EmbeddedDocument) value).getType(), null, ((BaseDocument) value).buffer,
                 new EmbeddedModifierProperty(this, propertyName));
         newRecord.buffer = null;
         newRecord.map = new LinkedHashMap<>();
         newRecord.dirty = true;
-        newRecord.set(((BaseDocument) value).toMap());
+        newRecord.set(((BaseDocument) value).propertiesAsMap());
         return newRecord;
       }
     } else if (value instanceof List) {
@@ -338,8 +401,7 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
         if (v instanceof Document && !((Document) v).getDatabase().getName().equals(database.getName())) {
           ((BaseDocument) v).buffer.rewind();
           final MutableDocument newRecord = (MutableDocument) database.getRecordFactory()
-              .newModifiableRecord(database, ((EmbeddedDocument) v).getType(), null, ((BaseDocument) v).buffer,
-                  new EmbeddedModifierProperty(this, propertyName));
+              .newMutableRecord(database, ((EmbeddedDocument) v).getType(), null, ((BaseDocument) v).buffer, new EmbeddedModifierProperty(this, propertyName));
           newRecord.buffer = null;
           newRecord.map = new LinkedHashMap<>();
           newRecord.dirty = true;
@@ -349,18 +411,17 @@ public class MutableDocument extends BaseDocument implements RecordInternal {
       }
     } else if (value instanceof Map) {
       final Map<Object, Object> map = (Map<Object, Object>) value;
-      for (Object key : map.keySet()) {
-        Object v = map.get(key);
+      for (Map.Entry<Object, Object> entry : map.entrySet()) {
+        final Object v = entry.getValue();
         if (v instanceof Document && !((Document) v).getDatabase().getName().equals(database.getName())) {
           ((BaseDocument) v).buffer.rewind();
           final MutableDocument newRecord = (MutableDocument) database.getRecordFactory()
-              .newModifiableRecord(database, ((EmbeddedDocument) v).getType(), null, ((BaseDocument) v).buffer,
-                  new EmbeddedModifierProperty(this, propertyName));
+              .newMutableRecord(database, ((EmbeddedDocument) v).getType(), null, ((BaseDocument) v).buffer, new EmbeddedModifierProperty(this, propertyName));
           newRecord.buffer = null;
           newRecord.map = new LinkedHashMap<>();
           newRecord.dirty = true;
           newRecord.set(((BaseDocument) v).toMap());
-          map.put(key, newRecord);
+          map.put(entry.getKey(), newRecord);
         }
       }
     }

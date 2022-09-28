@@ -1,28 +1,28 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index;
 
 import com.arcadedb.TestHelper;
-import com.arcadedb.database.*;
+import com.arcadedb.database.Document;
+import com.arcadedb.database.Identifiable;
+import com.arcadedb.database.MutableDocument;
+import com.arcadedb.database.RID;
 import com.arcadedb.exception.DuplicatedKeyException;
 import com.arcadedb.exception.NeedRetryException;
 import com.arcadedb.log.LogManager;
@@ -34,8 +34,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class LSMTreeIndexTest extends TestHelper {
   private static final int    TOT       = 100000;
@@ -44,98 +44,48 @@ public class LSMTreeIndexTest extends TestHelper {
 
   @Test
   public void testGet() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
 
-        final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT; ++i) {
+        final List<Integer> results = new ArrayList<>();
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-        for (int i = 0; i < TOT; ++i) {
-          final List<Integer> results = new ArrayList<>();
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            final IndexCursor value = index.get(new Object[] { i });
-            if (value.hasNext())
-              results.add((Integer) ((Document) value.next().getRecord()).get("id"));
-          }
-
-          total++;
-          Assertions.assertEquals(1, results.size());
-          Assertions.assertEquals(i, (int) results.get(0));
+          final IndexCursor value = index.get(new Object[] { i });
+          if (value.hasNext())
+            results.add((Integer) ((Document) value.next().getRecord()).get("id"));
         }
 
-        Assertions.assertEquals(TOT, total);
+        total++;
+        Assertions.assertEquals(1, results.size());
+        Assertions.assertEquals(i, (int) results.get(0));
       }
+
+      Assertions.assertEquals(TOT, total);
     });
   }
 
   @Test
   public void testGetAsRange() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (int i = 0; i < TOT; ++i) {
-          int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT; ++i) {
+        int total = 0;
 
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            Assertions.assertNotNull(index);
+          Assertions.assertNotNull(index);
 
-            final IndexCursor iterator;
-            try {
-              iterator = ((RangeIndex) index).range(new Object[] { i }, true, new Object[] { i }, true);
-              Assertions.assertNotNull(iterator);
-
-              while (iterator.hasNext()) {
-                Identifiable value = iterator.next();
-
-                Assertions.assertNotNull(value);
-
-                int fieldValue = (int) value.asDocument().get("id");
-                Assertions.assertEquals(i, fieldValue);
-
-                Assertions.assertNotNull(iterator.getKeys());
-                Assertions.assertEquals(1, iterator.getKeys().length);
-
-                total++;
-              }
-            } catch (Exception e) {
-              Assertions.fail(e);
-            }
-          }
-
-          Assertions.assertEquals(1, total, "Get item with id=" + i);
-        }
-      }
-    });
-  }
-
-  @Test
-  public void testRangeFromHead() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (int i = 0; i < TOT - 1; ++i) {
-          int total = 0;
-
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            Assertions.assertNotNull(index);
-
-            final IndexCursor iterator;
-            iterator = ((RangeIndex) index).range(new Object[] { i }, true, new Object[] { i + 1 }, true);
+          final IndexCursor iterator;
+          try {
+            iterator = ((RangeIndex) index).range(true, new Object[] { i }, true, new Object[] { i }, true);
             Assertions.assertNotNull(iterator);
 
             while (iterator.hasNext()) {
@@ -144,17 +94,57 @@ public class LSMTreeIndexTest extends TestHelper {
               Assertions.assertNotNull(value);
 
               int fieldValue = (int) value.asDocument().get("id");
-              Assertions.assertTrue(fieldValue >= i && fieldValue <= i + 1);
+              Assertions.assertEquals(i, fieldValue);
 
               Assertions.assertNotNull(iterator.getKeys());
               Assertions.assertEquals(1, iterator.getKeys().length);
 
-              ++total;
+              total++;
             }
+          } catch (Exception e) {
+            Assertions.fail(e);
           }
-
-          Assertions.assertEquals(2, total, "range " + i + "-" + (i + 1));
         }
+
+        Assertions.assertEquals(1, total, "Get item with id=" + i);
+      }
+    });
+  }
+
+  @Test
+  public void testRangeFromHead() {
+    database.transaction(() -> {
+
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT - 1; ++i) {
+        int total = 0;
+
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+
+          Assertions.assertNotNull(index);
+
+          final IndexCursor iterator;
+          iterator = ((RangeIndex) index).range(true, new Object[] { i }, true, new Object[] { i + 1 }, true);
+          Assertions.assertNotNull(iterator);
+
+          while (iterator.hasNext()) {
+            Identifiable value = iterator.next();
+
+            Assertions.assertNotNull(value);
+
+            int fieldValue = (int) value.asDocument().get("id");
+            Assertions.assertTrue(fieldValue >= i && fieldValue <= i + 1);
+
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
+
+            ++total;
+          }
+        }
+
+        Assertions.assertEquals(2, total, "range " + i + "-" + (i + 1));
       }
     });
   }
@@ -201,45 +191,43 @@ public class LSMTreeIndexTest extends TestHelper {
 
   @Test
   public void testRemoveKeys() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        int total = 0;
+    database.transaction(() -> {
+      int total = 0;
 
-        final Index[] indexes = database.getSchema().getIndexes();
+      final Index[] indexes = database.getSchema().getIndexes();
 
-        for (int i = 0; i < TOT; ++i) {
-          int found = 0;
+      for (int i = 0; i < TOT; ++i) {
+        int found = 0;
 
-          final Object[] key = new Object[] { i };
+        final Object[] key = new Object[] { i };
 
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            final IndexCursor value = index.get(key);
-            if (value.hasNext()) {
-              index.remove(key);
-              found++;
-              total++;
-            }
-          }
-
-          Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
-        }
-
-        Assertions.assertEquals(TOT, total);
-
-        // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " inside the TX by using get()");
+          final IndexCursor value = index.get(key);
+          if (value.hasNext()) {
+            index.remove(key);
+            found++;
+            total++;
           }
         }
 
-        // CHECK ALSO WITH RANGE
+        Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
+      }
+
+      Assertions.assertEquals(TOT, total);
+
+      // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " inside the TX by using get()");
+        }
+      }
+
+      // CHECK ALSO WITH RANGE
 // RANGE DOES NOT WORK WITH TX CHANGES YET
 //        for (int i = 0; i < TOT; ++i) {
 //          for (Index index : indexes) {
@@ -250,31 +238,27 @@ public class LSMTreeIndexTest extends TestHelper {
 //            Assertions.assertFalse(cursor.hasNext() && cursor.next() != null, "Found item with key " + i + " inside the TX by using range()");
 //          }
 //        }
-      }
     }, true, 0);
 
     // CHECK ALSO AFTER THE TX HAS BEEN COMMITTED
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " after the TX was committed");
-          }
+    database.transaction(() -> {
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " after the TX was committed");
         }
+      }
 
-        // CHECK ALSO WITH RANGE
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+      // CHECK ALSO WITH RANGE
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            final IndexCursor cursor = ((RangeIndex) index).range(new Object[] { i }, true, new Object[] { i }, true);
-            Assertions.assertFalse(cursor.hasNext() && cursor.next() != null, "Found item with key " + i + " after the TX was committed by using range()");
-          }
+          final IndexCursor cursor = ((RangeIndex) index).range(true, new Object[] { i }, true, new Object[] { i }, true);
+          Assertions.assertFalse(cursor.hasNext() && cursor.next() != null, "Found item with key " + i + " after the TX was committed by using range()");
         }
       }
     }, true, 0);
@@ -282,49 +266,45 @@ public class LSMTreeIndexTest extends TestHelper {
 
   @Test
   public void testRemoveEntries() {
+    database.transaction(() -> {
+      int total = 0;
 
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+      final Index[] indexes = database.getSchema().getIndexes();
 
-        int total = 0;
+      for (int i = 0; i < TOT; ++i) {
+        int found = 0;
 
-        final Index[] indexes = database.getSchema().getIndexes();
+        final Object[] key = new Object[] { i };
 
-        for (int i = 0; i < TOT; ++i) {
-          int found = 0;
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-          final Object[] key = new Object[] { i };
-
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            final IndexCursor value = index.get(key);
-            if (value.hasNext()) {
-              for (Identifiable r : value)
-                index.remove(key, r);
-              found++;
-              total++;
-            }
-          }
-
-          Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
-        }
-
-        Assertions.assertEquals(TOT, total);
-
-        // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
+          final IndexCursor value = index.get(key);
+          if (value.hasNext()) {
+            for (Identifiable r : value)
+              index.remove(key, r);
+            found++;
+            total++;
           }
         }
 
-        // CHECK ALSO WITH RANGE
+        Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
+      }
+
+      Assertions.assertEquals(TOT, total);
+
+      // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
+        }
+      }
+
+      // CHECK ALSO WITH RANGE
 // RANGE DOES NOT WORK WITH TX CHANGES YET
 //        for (int i = 0; i < TOT; ++i) {
 //          for (Index index : indexes) {
@@ -335,32 +315,28 @@ public class LSMTreeIndexTest extends TestHelper {
 //                "Found item with key " + i + " inside the TX by using range()");
 //          }
 //        }
-      }
     });
 
     // CHECK ALSO AFTER THE TX HAS BEEN COMMITTED
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+    database.transaction(() -> {
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " after the TX was committed");
-          }
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i + " after the TX was committed");
         }
+      }
 
-        // CHECK ALSO WITH RANGE
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+      // CHECK ALSO WITH RANGE
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            final IndexCursor cursor = ((RangeIndex) index).range(new Object[] { i }, true, new Object[] { i }, true);
-            Assertions.assertFalse(cursor.hasNext() && cursor.next() != null, "Found item with key " + i + " after the TX was committed by using range()");
-          }
+          final IndexCursor cursor = ((RangeIndex) index).range(true, new Object[] { i }, true, new Object[] { i }, true);
+          Assertions.assertFalse(cursor.hasNext() && cursor.next() != null, "Found item with key " + i + " after the TX was committed by using range()");
         }
       }
     }, true, 0);
@@ -368,46 +344,43 @@ public class LSMTreeIndexTest extends TestHelper {
 
   @Test
   public void testRemoveEntriesMultipleTimes() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        int total = 0;
+    database.transaction(() -> {
+      int total = 0;
 
-        final Index[] indexes = database.getSchema().getIndexes();
+      final Index[] indexes = database.getSchema().getIndexes();
 
-        for (int i = 0; i < TOT; ++i) {
-          int found = 0;
+      for (int i = 0; i < TOT; ++i) {
+        int found = 0;
 
-          final Object[] key = new Object[] { i };
+        final Object[] key = new Object[] { i };
 
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-            final IndexCursor value = index.get(key);
-            if (value.hasNext()) {
-              for (Identifiable r : value) {
-                for (int k = 0; k < 10; ++k)
-                  index.remove(key, r);
-              }
-              found++;
-              total++;
+          final IndexCursor value = index.get(key);
+          if (value.hasNext()) {
+            for (Identifiable r : value) {
+              for (int k = 0; k < 10; ++k)
+                index.remove(key, r);
             }
+            found++;
+            total++;
           }
-
-          Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
         }
 
-        Assertions.assertEquals(TOT, total);
+        Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
+      }
 
-        // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
+      Assertions.assertEquals(TOT, total);
 
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
-          }
+      // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
         }
       }
     });
@@ -417,7 +390,7 @@ public class LSMTreeIndexTest extends TestHelper {
   public void testRemoveAndPutEntries() {
     //database.getConfiguration().setValue(GlobalConfiguration.INDEX_COMPACTION_MIN_PAGES_SCHEDULE, 0); // DISABLE COMPACTION
 
-    database.transaction((database) -> {
+    database.transaction(() -> {
       int total = 0;
 
       final Index[] indexes = database.getSchema().getIndexes();
@@ -459,9 +432,9 @@ public class LSMTreeIndexTest extends TestHelper {
       }
     });
 
-    database.transaction((database) -> {
+    database.transaction(() -> {
       // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
-      List<Index> indexes = database.getSchema().getType(TYPE_NAME).getAllIndexes(false);
+      final Collection<TypeIndex> indexes = database.getSchema().getType(TYPE_NAME).getAllIndexes(false);
 
       for (int i = 0; i < TOT; ++i) {
         for (Index index : indexes) {
@@ -475,560 +448,549 @@ public class LSMTreeIndexTest extends TestHelper {
   }
 
   @Test
-  public void testUpdateKeys() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+  public void testChangePrimaryKeySameTx() {
+    database.transaction(() -> {
+      for (int i = 0; i < 1000; ++i) {
+        final IndexCursor cursor = database.lookupByKey(TYPE_NAME, "id", i);
+        Assertions.assertTrue(cursor.hasNext(), "Key " + i + " not found");
 
-        int total = 0;
-
-        final ResultSet resultSet = database.query("sql", "select from " + TYPE_NAME);
-        for (ResultSet it = resultSet; it.hasNext(); ) {
-          final Result r = it.next();
-
-          Assertions.assertNotNull(r.getElement().get().get("id"));
-
-          final MutableDocument record = (MutableDocument) r.getElement().get().modify();
-          record.set("id", (Integer) record.get("id") + 1000000);
-          record.save();
-        }
-
-        database.commit();
-        database.begin();
-
-        final Index[] indexes = database.getSchema().getIndexes();
-
-        // ORIGINAL KEYS SHOULD BE REMOVED
-        for (int i = 0; i < TOT; ++i) {
-          int found = 0;
-
-          final Object[] key = new Object[] { i };
-
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            final IndexCursor value = index.get(key);
-            if (value.hasNext()) {
-              found++;
-              total++;
-            }
-          }
-
-          Assertions.assertEquals(0, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
-        }
-
-        Assertions.assertEquals(0, total);
-
-        total = 0;
-
-        // CHECK FOR NEW KEYS
-        for (int i = 1000000; i < 1000000 + TOT; ++i) {
-          int found = 0;
-
-          final Object[] key = new Object[] { i };
-
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            final IndexCursor value = index.get(key);
-
-            if (value.hasNext()) {
-              for (Identifiable r : value) {
-                index.remove(key, r);
-                found++;
-              }
-              total++;
-            }
-          }
-
-          Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
-        }
-
-        Assertions.assertEquals(TOT, total);
-
-        // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
-        for (int i = 0; i < TOT; ++i) {
-          for (Index index : indexes)
-            Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
-        }
-
+        final Document doc = cursor.next().asDocument();
+        doc.modify().set("id", i + TOT).save();
       }
+    });
+  }
+
+  @Test
+  public void testDeleteCreateSameKeySameTx() {
+    database.transaction(() -> {
+      for (int i = 0; i < 1000; ++i) {
+        final IndexCursor cursor = database.lookupByKey(TYPE_NAME, "id", i);
+        Assertions.assertTrue(cursor.hasNext(), "Key " + i + " not found");
+
+        final Document doc = cursor.next().asDocument();
+        doc.delete();
+
+        database.newDocument(TYPE_NAME).fromMap(doc.toMap()).set("version", 2).save();
+      }
+    }, true, 0);
+
+    database.transaction(() -> {
+      for (int i = 0; i < 1000; ++i) {
+        final IndexCursor cursor = database.lookupByKey(TYPE_NAME, "id", i);
+        Assertions.assertTrue(cursor.hasNext(), "Key " + i + " not found");
+        Assertions.assertEquals(2, cursor.next().asDocument().getInteger("version"));
+      }
+    });
+  }
+
+  @Test
+  public void testUpdateKeys() {
+    database.transaction(() -> {
+      int total = 0;
+
+      final ResultSet resultSet = database.query("sql", "select from " + TYPE_NAME);
+      for (ResultSet it = resultSet; it.hasNext(); ) {
+        final Result r = it.next();
+
+        Assertions.assertNotNull(r.getElement().get().get("id"));
+
+        final MutableDocument record = r.getElement().get().modify();
+        record.set("id", (Integer) record.get("id") + 1000000);
+        record.save();
+      }
+
+      database.commit();
+      database.begin();
+
+      final Index[] indexes = database.getSchema().getIndexes();
+
+      // ORIGINAL KEYS SHOULD BE REMOVED
+      for (int i = 0; i < TOT; ++i) {
+        int found = 0;
+
+        final Object[] key = new Object[] { i };
+
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+
+          final IndexCursor value = index.get(key);
+          if (value.hasNext()) {
+            found++;
+            total++;
+          }
+        }
+
+        Assertions.assertEquals(0, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
+      }
+
+      Assertions.assertEquals(0, total);
+
+      total = 0;
+
+      // CHECK FOR NEW KEYS
+      for (int i = 1000000; i < 1000000 + TOT; ++i) {
+        int found = 0;
+
+        final Object[] key = new Object[] { i };
+
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
+
+          final IndexCursor value = index.get(key);
+
+          if (value.hasNext()) {
+            for (Identifiable r : value) {
+              index.remove(key, r);
+              found++;
+            }
+            total++;
+          }
+        }
+
+        Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
+      }
+
+      Assertions.assertEquals(TOT, total);
+
+      // GET EACH ITEM TO CHECK IT HAS BEEN DELETED
+      for (int i = 0; i < TOT; ++i) {
+        for (Index index : indexes)
+          Assertions.assertFalse(index.get(new Object[] { i }).hasNext(), "Found item with key " + i);
+      }
+
     });
   }
 
   @Test
   public void testPutDuplicates() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
 
-        final Index[] indexes = database.getSchema().getIndexes();
+      for (int i = 0; i < TOT; ++i) {
+        int found = 0;
 
-        for (int i = 0; i < TOT; ++i) {
-          int found = 0;
+        final Object[] key = new Object[] { i };
 
-          final Object[] key = new Object[] { i };
+        for (Index index : indexes) {
+          if (index instanceof TypeIndex)
+            continue;
 
-          for (Index index : indexes) {
-            if (index instanceof TypeIndex)
-              continue;
-
-            final IndexCursor value = index.get(key);
-            if (value.hasNext()) {
-              try {
-                index.put(key, new RID[] { new RID(database, 10, 10) });
-                database.commit();
-                Assertions.fail();
-              } catch (DuplicatedKeyException e) {
-                // OK
-              }
-              database.begin();
-              found++;
-              total++;
+          final IndexCursor value = index.get(key);
+          if (value.hasNext()) {
+            try {
+              index.put(key, new RID[] { new RID(database, 10, 10) });
+              database.commit();
+              Assertions.fail();
+            } catch (DuplicatedKeyException e) {
+              // OK
             }
+            database.begin();
+            found++;
+            total++;
           }
-
-          Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
         }
 
-        Assertions.assertEquals(TOT, total);
+        Assertions.assertEquals(1, found, "Key '" + Arrays.toString(key) + "' found " + found + " times");
       }
+
+      Assertions.assertEquals(TOT, total);
     });
   }
 
   @Test
   public void testScanIndexAscending() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
 
+      try {
+        // WAIT FOR THE INDEX TO BE COMPACTED
+        Thread.sleep(1000);
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
+
+      int total = 0;
+
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
+
+        Assertions.assertNotNull(index);
+
+        final IndexCursor iterator;
         try {
-          // WAIT FOR THE INDEX TO BE COMPACTED
-          Thread.sleep(1000);
-        } catch (InterruptedException e) {
-          e.printStackTrace();
-        }
-
-        int total = 0;
-
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
-
-          Assertions.assertNotNull(index);
-
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(true);
+          iterator = ((RangeIndex) index).iterator(true);
 
 //            LogManager.instance()
 //                .log(this, Level.INFO, "*****************************************************************************\nCURSOR BEGIN%s", iterator.dumpStats());
 
-            Assertions.assertNotNull(iterator);
+          Assertions.assertNotNull(iterator);
 
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              total++;
-            }
+            total++;
+          }
 
 //            LogManager.instance().log(this, Level.INFO, "*****************************************************************************\nCURSOR END total=%d %s", total,
 //                iterator.dumpStats());
 
-          } catch (Exception e) {
-            Assertions.fail(e);
-          }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(TOT, total);
       }
+
+      Assertions.assertEquals(TOT, total);
     });
   }
 
   @Test
   public void testScanIndexDescending() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
 
-        try {
-          // WAIT FOR THE INDEX TO BE COMPACTED
-          Thread.sleep(1000);
-        } catch (InterruptedException e) {
-          e.printStackTrace();
-        }
-
-        int total = 0;
-
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
-
-          Assertions.assertNotNull(index);
-
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(false);
-            Assertions.assertNotNull(iterator);
-
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
-
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              //LogManager.instance().log(this, Level.INFO, "Index %s Key %s", null, index, Arrays.toString(iterator.getKeys()));
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
-          }
-        }
-
-        Assertions.assertEquals(TOT, total);
+      try {
+        // WAIT FOR THE INDEX TO BE COMPACTED
+        Thread.sleep(1000);
+      } catch (InterruptedException e) {
+        e.printStackTrace();
       }
+
+      int total = 0;
+
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
+
+        Assertions.assertNotNull(index);
+
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).iterator(false);
+          Assertions.assertNotNull(iterator);
+
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
+
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
+
+            //LogManager.instance().log(this, Level.INFO, "Index %s Key %s", null, index, Arrays.toString(iterator.getKeys()));
+
+            total++;
+          }
+        } catch (Exception e) {
+          Assertions.fail(e);
+        }
+      }
+
+      Assertions.assertEquals(TOT, total);
     });
   }
 
   @Test
   public void testScanIndexAscendingPartialInclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).iterator(true, new Object[] { 10 }, true);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(true, new Object[] { 10 }, true);
+          Assertions.assertNotNull(iterator);
 
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
 
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(TOT - 10, total);
       }
+
+      Assertions.assertEquals(TOT - 10, total);
     });
   }
 
   @Test
   public void testScanIndexAscendingPartialExclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).iterator(true, new Object[] { 10 }, false);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(true, new Object[] { 10 }, false);
+          Assertions.assertNotNull(iterator);
 
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
 
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(TOT - 11, total);
       }
+
+      Assertions.assertEquals(TOT - 11, total);
     });
   }
 
   @Test
   public void testScanIndexDescendingPartialInclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).iterator(false, new Object[] { 9 }, true);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(false, new Object[] { 9 }, true);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
 
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(10, total);
       }
+
+      Assertions.assertEquals(10, total);
     });
   }
 
   @Test
   public void testScanIndexDescendingPartialExclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).iterator(false, new Object[] { 9 }, false);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).iterator(false, new Object[] { 9 }, false);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Assertions.assertNotNull(iterator.next());
 
-            while (iterator.hasNext()) {
-              Assertions.assertNotNull(iterator.next());
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(9, total);
       }
+
+      Assertions.assertEquals(9, total);
     });
   }
 
   @Test
   public void testScanIndexRangeInclusive2Inclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).range(true, new Object[] { 10 }, true, new Object[] { 19 }, true);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).range(new Object[] { 10 }, true, new Object[] { 19 }, true);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Identifiable value = iterator.next();
 
-            while (iterator.hasNext()) {
-              Identifiable value = iterator.next();
+            Assertions.assertNotNull(value);
 
-              Assertions.assertNotNull(value);
+            int fieldValue = (int) value.asDocument().get("id");
+            Assertions.assertTrue(fieldValue >= 10 && fieldValue <= 19);
 
-              int fieldValue = (int) value.asDocument().get("id");
-              Assertions.assertTrue(fieldValue >= 10 && fieldValue <= 19);
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(10, total);
       }
+
+      Assertions.assertEquals(10, total);
     });
   }
 
   @Test
   public void testScanIndexRangeInclusive2Exclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).range(true, new Object[] { 10 }, true, new Object[] { 19 }, false);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).range(new Object[] { 10 }, true, new Object[] { 19 }, false);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Identifiable value = iterator.next();
 
-            while (iterator.hasNext()) {
-              Identifiable value = iterator.next();
+            Assertions.assertNotNull(value);
 
-              Assertions.assertNotNull(value);
+            int fieldValue = (int) value.asDocument().get("id");
+            Assertions.assertTrue(fieldValue >= 10 && fieldValue < 19);
 
-              int fieldValue = (int) value.asDocument().get("id");
-              Assertions.assertTrue(fieldValue >= 10 && fieldValue < 19);
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(9, total);
       }
+
+      Assertions.assertEquals(9, total);
     });
   }
 
   @Test
   public void testScanIndexRangeExclusive2Inclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).range(true, new Object[] { 10 }, false, new Object[] { 19 }, true);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).range(new Object[] { 10 }, false, new Object[] { 19 }, true);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Identifiable value = iterator.next();
 
-            while (iterator.hasNext()) {
-              Identifiable value = iterator.next();
+            Assertions.assertNotNull(value);
 
-              Assertions.assertNotNull(value);
+            int fieldValue = (int) value.asDocument().get("id");
+            Assertions.assertTrue(fieldValue > 10 && fieldValue <= 19);
 
-              int fieldValue = (int) value.asDocument().get("id");
-              Assertions.assertTrue(fieldValue > 10 && fieldValue <= 19);
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(9, total);
       }
+
+      Assertions.assertEquals(9, total);
     });
   }
 
   @Test
   public void testScanIndexRangeExclusive2Exclusive() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
+    database.transaction(() -> {
+      int total = 0;
 
-        int total = 0;
+      final Index[] indexes = database.getSchema().getIndexes();
+      for (Index index : indexes) {
+        if (index instanceof TypeIndex)
+          continue;
 
-        final Index[] indexes = database.getSchema().getIndexes();
-        for (Index index : indexes) {
-          if (index instanceof TypeIndex)
-            continue;
+        Assertions.assertNotNull(index);
 
-          Assertions.assertNotNull(index);
+        final IndexCursor iterator;
+        try {
+          iterator = ((RangeIndex) index).range(true, new Object[] { 10 }, false, new Object[] { 19 }, false);
+          Assertions.assertNotNull(iterator);
 
-          final IndexCursor iterator;
-          try {
-            iterator = ((RangeIndex) index).range(new Object[] { 10 }, false, new Object[] { 19 }, false);
-            Assertions.assertNotNull(iterator);
+          while (iterator.hasNext()) {
+            Identifiable value = iterator.next();
 
-            while (iterator.hasNext()) {
-              Identifiable value = iterator.next();
+            Assertions.assertNotNull(value);
 
-              Assertions.assertNotNull(value);
+            int fieldValue = (int) value.asDocument().get("id");
+            Assertions.assertTrue(fieldValue > 10 && fieldValue < 19);
 
-              int fieldValue = (int) value.asDocument().get("id");
-              Assertions.assertTrue(fieldValue > 10 && fieldValue < 19);
+            Assertions.assertNotNull(iterator.getKeys());
+            Assertions.assertEquals(1, iterator.getKeys().length);
 
-              Assertions.assertNotNull(iterator.getKeys());
-              Assertions.assertEquals(1, iterator.getKeys().length);
-
-              total++;
-            }
-          } catch (Exception e) {
-            Assertions.fail(e);
+            total++;
           }
+        } catch (Exception e) {
+          Assertions.fail(e);
         }
-
-        Assertions.assertEquals(8, total);
       }
+
+      Assertions.assertEquals(8, total);
     });
   }
 
   @Test
   public void testUniqueConcurrentWithIndexesCompaction() throws InterruptedException {
-
     database.begin();
     final long startingWith = database.countType(TYPE_NAME, true);
 
@@ -1039,7 +1001,7 @@ public class LSMTreeIndexTest extends TestHelper {
     final AtomicLong duplicatedExceptions = new AtomicLong();
     final AtomicLong crossThreadsInserted = new AtomicLong();
 
-    final Thread[] threads = new Thread[Runtime.getRuntime().availableProcessors() * 4];
+    final Thread[] threads = new Thread[16];
     LogManager.instance().log(this, Level.INFO, "%s Started with %d threads", null, getClass(), threads.length);
 
     for (int i = 0; i < threads.length; ++i) {
@@ -1135,17 +1097,14 @@ public class LSMTreeIndexTest extends TestHelper {
 
       LogManager.instance().log(this, Level.INFO, "COUNT OF INSERTED RECORDS (ORDERED BY ID)");
       final Map<Integer, Integer> result = new HashMap<>();
-      database.scanType(TYPE_NAME, true, new DocumentCallback() {
-        @Override
-        public boolean onRecord(Document record) {
-          final int id = (int) record.get("id");
-          Integer key = result.get(id);
-          if (key == null)
-            result.put(id, 1);
-          else
-            result.put(id, key + 1);
-          return true;
-        }
+      database.scanType(TYPE_NAME, true, record -> {
+        final int id = (int) record.get("id");
+        Integer key = result.get(id);
+        if (key == null)
+          result.put(id, 1);
+        else
+          result.put(id, key + 1);
+        return true;
       });
 
       LogManager.instance().log(this, Level.INFO, "FOUND %d ENTRIES", null, result.size());
@@ -1166,30 +1125,27 @@ public class LSMTreeIndexTest extends TestHelper {
   }
 
   protected void beginTest() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        Assertions.assertFalse(database.getSchema().existsType(TYPE_NAME));
+    database.transaction(() -> {
+      Assertions.assertFalse(database.getSchema().existsType(TYPE_NAME));
 
-        final DocumentType type = database.getSchema().createDocumentType(TYPE_NAME, 3);
-        type.createProperty("id", Integer.class);
-        final Index typeIndex = database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, TYPE_NAME, new String[] { "id" }, PAGE_SIZE);
+      final DocumentType type = database.getSchema().createDocumentType(TYPE_NAME, 3);
+      type.createProperty("id", Integer.class);
+      final Index typeIndex = database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, TYPE_NAME, new String[] { "id" }, PAGE_SIZE);
 
-        for (int i = 0; i < TOT; ++i) {
-          final MutableDocument v = database.newDocument(TYPE_NAME);
-          v.set("id", i);
-          v.set("name", "Jay");
-          v.set("surname", "Miner");
+      for (int i = 0; i < TOT; ++i) {
+        final MutableDocument v = database.newDocument(TYPE_NAME);
+        v.set("id", i);
+        v.set("name", "Jay");
+        v.set("surname", "Miner");
 
-          v.save();
-        }
+        v.save();
+      }
 
-        database.commit();
-        database.begin();
+      database.commit();
+      database.begin();
 
-        for (Index index : ((TypeIndex) typeIndex).getIndexesOnBuckets()) {
-          Assertions.assertTrue(((IndexInternal) index).getStats().get("pages") > 1);
-        }
+      for (Index index : ((TypeIndex) typeIndex).getIndexesOnBuckets()) {
+        Assertions.assertTrue(((IndexInternal) index).getStats().get("pages") > 1);
       }
     });
   }

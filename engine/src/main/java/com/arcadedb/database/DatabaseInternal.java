@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.engine.FileManager;
@@ -26,13 +23,14 @@ import com.arcadedb.engine.PageManager;
 import com.arcadedb.engine.TransactionManager;
 import com.arcadedb.engine.WALFileFactory;
 import com.arcadedb.graph.GraphEngine;
-import com.arcadedb.serializer.BinarySerializer;
 import com.arcadedb.query.sql.parser.ExecutionPlanCache;
 import com.arcadedb.query.sql.parser.StatementCache;
+import com.arcadedb.security.SecurityDatabaseUser;
+import com.arcadedb.serializer.BinarySerializer;
 
-import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.Callable;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
 
 /**
  * Internal API, do not use as an end user.
@@ -42,7 +40,6 @@ public interface DatabaseInternal extends Database {
     TX_AFTER_WAL_WRITE, DB_NOT_CLOSED
   }
 
-  @Override
   TransactionContext getTransaction();
 
   MutableEmbeddedDocument newEmbeddedDocument(EmbeddedModifier modifier, String typeName);
@@ -63,6 +60,20 @@ public interface DatabaseInternal extends Database {
 
   DatabaseInternal getWrappedDatabaseInstance();
 
+  Map<String, Object> getWrappers();
+
+  void setWrapper(final String name, final Object instance);
+
+  void checkPermissionsOnDatabase(SecurityDatabaseUser.DATABASE_ACCESS access);
+
+  void checkPermissionsOnFile(int fileId, SecurityDatabaseUser.ACCESS access);
+
+  boolean checkTransactionIsActive(boolean createTx);
+
+  long getResultSetLimit();
+
+  long getReadTimeout();
+
   void registerCallback(CALLBACK_EVENT event, Callable<Void> callback);
 
   void unregisterCallback(CALLBACK_EVENT event, Callable<Void> callback);
@@ -77,11 +88,13 @@ public interface DatabaseInternal extends Database {
 
   void createRecord(Record record, String bucketName);
 
-  void createRecordNoLock(Record record, String bucketName);
+  void createRecordNoLock(Record record, String bucketName, boolean discardRecordAfter);
 
   void updateRecord(Record record);
 
-  void updateRecordNoLock(Record record);
+  void updateRecordNoLock(Record record, boolean discardRecordAfter);
+
+  void deleteRecordNoLock(Record record);
 
   void kill();
 
@@ -93,5 +106,11 @@ public interface DatabaseInternal extends Database {
 
   ExecutionPlanCache getExecutionPlanCache();
 
-  int getEdgeListSize(int previousSize);
+  int getNewEdgeListSize(int previousSize);
+
+  <RET> RET recordFileChanges(final Callable<Object> callback);
+
+  void saveConfiguration() throws IOException;
+
+  Map<String, Object> alignToReplicas();
 }

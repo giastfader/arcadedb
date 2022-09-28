@@ -1,25 +1,25 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.postgres;
 
+import com.arcadedb.exception.ArcadeDBException;
+import com.arcadedb.log.LogManager;
 import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.ServerException;
 import com.arcadedb.server.ha.network.ServerSocketFactory;
@@ -35,24 +35,23 @@ public class PostgresNetworkListener extends Thread {
   }
 
   private final    ArcadeDBServer      server;
-  private          ServerSocketFactory socketFactory;
+  private final    ServerSocketFactory socketFactory;
   private          ServerSocket        serverSocket;
   private          InetSocketAddress   inboundAddr;
-  private volatile boolean             active           = true;
-  private          int                 socketBufferSize = 0;
-  private          int                 protocolVersion  = -1;
+  private volatile boolean             active          = true;
+  private final    int                 protocolVersion = -1;
   private final    String              hostName;
   private          int                 port;
   private          ClientConnected     callback;
 
-  public PostgresNetworkListener(final ArcadeDBServer server, final ServerSocketFactory iSocketFactory, final String iHostName, final String iHostPortRange) {
-    super(server.getServerName() + " PostgresW listening at " + iHostName + ":" + iHostPortRange);
+  public PostgresNetworkListener(final ArcadeDBServer server, final ServerSocketFactory iSocketFactory, final String hostName, final String hostPortRange) {
+    super(server.getServerName() + " PostgresW listening at " + hostName + ":" + hostPortRange);
 
     this.server = server;
-    this.hostName = iHostName;
+    this.hostName = hostName;
     this.socketFactory = iSocketFactory == null ? ServerSocketFactory.getDefault() : iSocketFactory;
 
-    listen(iHostName, iHostPortRange);
+    listen(hostName, hostPortRange);
 
     start();
   }
@@ -65,10 +64,7 @@ public class PostgresNetworkListener extends Thread {
           final Socket socket = serverSocket.accept();
 
           socket.setPerformancePreferences(0, 2, 1);
-          if (socketBufferSize > 0) {
-            socket.setSendBufferSize(socketBufferSize);
-            socket.setReceiveBufferSize(socketBufferSize);
-          }
+
           // CREATE A NEW PROTOCOL INSTANCE
           // TODO: OPEN A DATABASE
           final PostgresNetworkExecutor connection = new PostgresNetworkExecutor(server, socket, null);
@@ -79,7 +75,7 @@ public class PostgresNetworkListener extends Thread {
 
         } catch (Exception e) {
           if (active)
-            server.log(this, Level.WARNING, "Error on client connection", e);
+            LogManager.instance().log(this, Level.WARNING, "Error on client connection", e);
         }
       }
     } finally {
@@ -133,25 +129,25 @@ public class PostgresNetworkListener extends Thread {
         serverSocket = socketFactory.createServerSocket(tryPort, 0, InetAddress.getByName(hostName));
 
         if (serverSocket.isBound()) {
-          server.log(this, Level.INFO,
-              "Listening for replication connections on $ANSI{green " + inboundAddr.getAddress().getHostAddress() + ":" + inboundAddr.getPort()
+          LogManager.instance().log(this, Level.INFO,
+              "Listening for incoming connections on $ANSI{green " + inboundAddr.getAddress().getHostAddress() + ":" + inboundAddr.getPort()
                   + "} (protocol v." + protocolVersion + ")");
 
           port = tryPort;
           return;
         }
       } catch (BindException be) {
-        server.log(this, Level.WARNING, "Port %s:%d busy, trying the next available...", hostName, tryPort);
+        LogManager.instance().log(this, Level.WARNING, "Port %s:%d busy, trying the next available...", hostName, tryPort);
       } catch (SocketException se) {
-        server.log(this, Level.SEVERE, "Unable to create socket", se);
-        throw new RuntimeException(se);
+        LogManager.instance().log(this, Level.SEVERE, "Unable to create socket", se);
+        throw new ArcadeDBException(se);
       } catch (IOException ioe) {
-        server.log(this, Level.SEVERE, "Unable to read data from an open socket", ioe);
-        throw new RuntimeException(ioe);
+        LogManager.instance().log(this, Level.SEVERE, "Unable to read data from an open socket", ioe);
+        throw new ArcadeDBException(ioe);
       }
     }
 
-    server.log(this, Level.SEVERE, "Unable to listen for connections using the configured ports '%s' on host '%s'", null, hostPortRange, hostName);
+    LogManager.instance().log(this, Level.SEVERE, "Unable to listen for connections using the configured ports '%s' on host '%s'", hostPortRange, hostName);
 
     throw new ServerException("Unable to listen for connections using the configured ports '" + hostPortRange + "' on host '" + hostName + "'");
   }

@@ -1,38 +1,30 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.log.LogManager;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class FileManager {
   private final        PaginatedFile.MODE                        mode;
@@ -53,6 +45,21 @@ public class FileManager {
       this.create = create;
       this.fileId = fileId;
       this.fileName = fileName;
+    }
+
+    @Override
+    public boolean equals(final Object o) {
+      if (this == o)
+        return true;
+      if (!(o instanceof FileChange))
+        return false;
+      final FileChange that = (FileChange) o;
+      return fileId == that.fileId;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(fileId);
     }
   }
 
@@ -122,8 +129,14 @@ public class FileManager {
       files.set(fileId, null);
       file.drop();
 
-      if (recordedChanges != null)
-        recordedChanges.add(new FileChange(false, fileId, file.getFileName()));
+      final FileChange entry = new FileChange(false, fileId, file.getFileName());
+      if (recordedChanges != null) {
+        if (recordedChanges.remove(entry))
+          // JUST ADDED: REMOVE THE ENTRY
+          return;
+
+        recordedChanges.add(entry);
+      }
     }
   }
 
@@ -136,7 +149,6 @@ public class FileManager {
 
   public void setVirtualFileSize(final Integer fileId, final long fileSize) {
     fileVirtualSize.put(fileId, fileSize);
-//    LogManager.instance().log(this, Level.INFO, "File %d vSize=%d (thread=%d)", fileId, fileSize, Thread.currentThread().getId());
   }
 
   public FileManagerStats getStats() {
@@ -146,8 +158,8 @@ public class FileManager {
     return stats;
   }
 
-  public Collection<PaginatedFile> getFiles() {
-    return fileNameMap.values();
+  public List<PaginatedFile> getFiles() {
+    return Collections.unmodifiableList(files);
   }
 
   public boolean existsFile(final int fileId) {

@@ -1,87 +1,75 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.security;
 
 import com.arcadedb.ContextConfiguration;
 import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.database.DatabaseFactory;
+import com.arcadedb.database.DatabaseInternal;
 import com.arcadedb.log.LogManager;
+import com.arcadedb.security.SecurityManager;
 import com.arcadedb.server.ArcadeDBServer;
 import com.arcadedb.server.DefaultConsoleReader;
 import com.arcadedb.server.ServerException;
 import com.arcadedb.server.ServerPlugin;
 import com.arcadedb.server.http.HttpServer;
+import com.arcadedb.server.security.credential.CredentialsValidator;
+import com.arcadedb.server.security.credential.DefaultCredentialsValidator;
 import com.arcadedb.utility.AnsiCode;
 import com.arcadedb.utility.LRUCache;
 import io.undertow.server.handlers.PathHandler;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.KeySpec;
+import java.io.*;
+import java.nio.charset.*;
+import java.security.*;
+import java.security.spec.*;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.logging.Level;
+import java.util.logging.*;
 
-import static com.arcadedb.GlobalConfiguration.*;
+import static com.arcadedb.GlobalConfiguration.SERVER_SECURITY_ALGORITHM;
+import static com.arcadedb.GlobalConfiguration.SERVER_SECURITY_SALT_CACHE_SIZE;
+import static com.arcadedb.GlobalConfiguration.SERVER_SECURITY_SALT_ITERATIONS;
 
-public class ServerSecurity implements ServerPlugin {
+public class ServerSecurity implements ServerPlugin, com.arcadedb.security.SecurityManager {
 
-  private final        ArcadeDBServer                    server;
-  private final        ServerSecurityFileRepository      securityRepository;
-  private final        String                            configPath;
-  private final        ConcurrentMap<String, ServerUser> users                = new ConcurrentHashMap<>();
-  private final        String                            algorithm;
-  private final        SecretKeyFactory                  secretKeyFactory;
-  private final        Map<String, String>               saltCache;
-  private final        int                               saltIteration;
-  private              CredentialsValidator              credentialsValidator = new DefaultCredentialsValidator();
-  private static final Random                            RANDOM               = new SecureRandom();
-  public static final  String                            FILE_NAME            = "security.json";
-  public static final  int                               SALT_SIZE            = 32;
-
-  public static class ServerUser {
-    public final String      name;
-    public final String      password;
-    public final boolean     databaseBlackList;
-    public final Set<String> databases = new HashSet<>();
-
-    public ServerUser(final String name, final String password, final boolean databaseBlackList, final Collection<String> databases) {
-      this.name = name;
-      this.password = password;
-      this.databaseBlackList = databaseBlackList;
-      if (databases != null)
-        this.databases.addAll(databases);
-    }
-  }
+  public static final  int                             LATEST_VERSION             = 1;
+  private static final int                             CHECK_USER_RELOAD_EVERY_MS = 5_000;
+  private final        ArcadeDBServer                  server;
+  private final        SecurityUserFileRepository      usersRepository;
+  private final        SecurityGroupFileRepository     groupRepository;
+  private final        String                          algorithm;
+  private final        SecretKeyFactory                secretKeyFactory;
+  private final        Map<String, String>             saltCache;
+  private final        int                             saltIteration;
+  private final        Map<String, ServerSecurityUser> users                      = new HashMap<>();
+  private              CredentialsValidator            credentialsValidator       = new DefaultCredentialsValidator();
+  private static final Random                          RANDOM                     = new SecureRandom();
+  public static final  int                             SALT_SIZE                  = 32;
+  private              Timer                           reloadConfigurationTimer;
 
   public ServerSecurity(final ArcadeDBServer server, final ContextConfiguration configuration, final String configPath) {
     this.server = server;
-    this.configPath = configPath;
     this.algorithm = configuration.getValueAsString(SERVER_SECURITY_ALGORITHM);
 
     final int cacheSize = configuration.getValueAsInteger(SERVER_SECURITY_SALT_CACHE_SIZE);
@@ -93,7 +81,14 @@ public class ServerSecurity implements ServerPlugin {
 
     saltIteration = configuration.getValueAsInteger(SERVER_SECURITY_SALT_ITERATIONS);
 
-    securityRepository = new ServerSecurityFileRepository(configPath + "/" + FILE_NAME);
+    usersRepository = new SecurityUserFileRepository(configPath);
+    groupRepository = new SecurityGroupFileRepository(configPath).onReload((latestConfiguration) -> {
+      for (String databaseName : server.getDatabaseNames()) {
+        updateSchema((DatabaseInternal) server.getDatabase(databaseName));
+      }
+      return null;
+    });
+
     try {
       secretKeyFactory = SecretKeyFactory.getInstance(algorithm);
     } catch (NoSuchAlgorithmException e) {
@@ -108,45 +103,77 @@ public class ServerSecurity implements ServerPlugin {
 
   @Override
   public void startService() {
-    try {
-      users.putAll(securityRepository.loadConfiguration());
+  }
 
-      if (users.isEmpty())
-        createDefaultSecurity();
+  public void loadUsers() {
+    try {
+      users.clear();
+
+      try {
+        for (JSONObject userJson : usersRepository.getUsers()) {
+          final ServerSecurityUser user = new ServerSecurityUser(server, userJson);
+          users.put(user.getName(), user);
+        }
+      } catch (JSONException e) {
+        groupRepository.saveInError(e);
+        for (JSONObject userJson : SecurityUserFileRepository.createDefault()) {
+          final ServerSecurityUser user = new ServerSecurityUser(server, userJson);
+          users.put(user.getName(), user);
+        }
+      }
+
+      if (users.isEmpty() || (users.containsKey("root") && users.get("root").getPassword() == null))
+        askForRootPassword();
+
+      final long fileLastModified = usersRepository.getFileLastModified();
+      if (fileLastModified > -1 && reloadConfigurationTimer == null) {
+        reloadConfigurationTimer = new Timer();
+        reloadConfigurationTimer.schedule(new TimerTask() {
+          @Override
+          public void run() {
+            if (usersRepository.isUserFileChanged()) {
+              LogManager.instance().log(this, Level.INFO, "Reloading user files...");
+              loadUsers();
+            }
+          }
+        }, CHECK_USER_RELOAD_EVERY_MS, CHECK_USER_RELOAD_EVERY_MS);
+      }
 
     } catch (IOException e) {
       throw new ServerException("Error on starting Security service", e);
     }
   }
-  // end::contains[]
 
   @Override
   public void stopService() {
+    if (reloadConfigurationTimer != null)
+      reloadConfigurationTimer.cancel();
+
     users.clear();
+    if (groupRepository != null)
+      groupRepository.stop();
   }
 
-  public ServerUser authenticate(final String userName, final String userPassword) {
-    final ServerUser su = users.get(userName);
+  public ServerSecurityUser authenticate(final String userName, final String userPassword, final String databaseName) {
+
+    final ServerSecurityUser su = users.get(userName);
     if (su == null)
       throw new ServerSecurityException("User/Password not valid");
 
-    if (!passwordMatch(userPassword, su.password))
+    if (!passwordMatch(userPassword, su.getPassword()))
       throw new ServerSecurityException("User/Password not valid");
+
+    if (databaseName != null) {
+      final Set<String> allowedDatabases = su.getAuthorizedDatabases();
+      if (!allowedDatabases.contains(SecurityManager.ANY) && !su.getAuthorizedDatabases().contains(databaseName))
+        throw new ServerSecurityException("User has not access to database '" + databaseName + "'");
+    }
 
     return su;
   }
 
-  public Set<String> userDatabases(final ServerUser user) {
-    final Set<String> dbs = new HashSet<>(server.getDatabaseNames());
-    if (user.databaseBlackList)
-      dbs.removeAll(user.databases);
-    else
-      dbs.retainAll(user.databases);
-    return dbs;
-  }
-
   /**
-   * Override the default credentials validator providing a custom one.
+   * Override the default @{@link CredentialsValidator} implementation (@{@link DefaultCredentialsValidator}) providing a custom one.
    */
   public void setCredentialsValidator(final CredentialsValidator credentialsValidator) {
     this.credentialsValidator = credentialsValidator;
@@ -156,24 +183,49 @@ public class ServerSecurity implements ServerPlugin {
     return users.containsKey(userName);
   }
 
-  public void createUser(final String name, final String password, final boolean databaseBlackList, final Collection<String> databases) throws IOException {
-    users.put(name, new ServerUser(name, this.encode(password, generateRandomSalt()), databaseBlackList, databases));
-    securityRepository.saveConfiguration(users);
+  public ServerSecurityUser getUser(final String userName) {
+    return users.get(userName);
+  }
+
+  public ServerSecurityUser createUser(final JSONObject userConfiguration) {
+    final String name = userConfiguration.getString("name");
+    if (users.containsKey(name))
+      throw new SecurityException("User '" + name + "' already exists");
+
+    final ServerSecurityUser user = new ServerSecurityUser(server, userConfiguration);
+    users.put(name, user);
+    saveUsers();
+    return user;
+  }
+
+  public void dropUser(final String userName) {
+    if (users.remove(userName) != null)
+      saveUsers();
+  }
+
+  @Override
+  public void updateSchema(final DatabaseInternal database) {
+    if (database == null)
+      return;
+
+    for (ServerSecurityUser user : users.values()) {
+      final ServerSecurityDatabaseUser databaseUser = user.getDatabaseUser(database);
+      if (databaseUser != null) {
+        final JSONObject groupConfiguration = getDatabaseGroupsConfiguration(database.getName());
+        if (groupConfiguration == null)
+          continue;
+
+        databaseUser.updateFileAccess(database, groupConfiguration);
+      }
+    }
   }
 
   public String getEncodedHash(final String password, final String salt, final int iterations) {
     // Returns only the last part of whole encoded password
-    final SecretKeyFactory keyFactory;
-    try {
-      keyFactory = SecretKeyFactory.getInstance(algorithm);
-    } catch (NoSuchAlgorithmException e) {
-      throw new ServerSecurityException("Could NOT retrieve '" + algorithm + "' algorithm", e);
-    }
-
-    final KeySpec keySpec = new PBEKeySpec(password.toCharArray(), salt.getBytes(Charset.forName("UTF-8")), iterations, 256);
+    final KeySpec keySpec = new PBEKeySpec(password.toCharArray(), salt.getBytes(StandardCharsets.UTF_8), iterations, 256);
     final SecretKey secret;
     try {
-      secret = keyFactory.generateSecret(keySpec);
+      secret = secretKeyFactory.generateSecret(keySpec);
     } catch (InvalidKeySpecException e) {
       throw new ServerSecurityException("Error on generating security key", e);
     }
@@ -181,18 +233,22 @@ public class ServerSecurity implements ServerPlugin {
     final byte[] rawHash = secret.getEncoded();
     final byte[] hashBase64 = Base64.getEncoder().encode(rawHash);
 
-    return new String(hashBase64);
+    return new String(hashBase64, DatabaseFactory.getDefaultCharset());
   }
 
   @Override
   public void registerAPI(HttpServer httpServer, final PathHandler routes) {
   }
 
-  protected String encode(final String password, final String salt) {
-    return this.encode(password, salt, saltIteration);
+  protected String encodePassword(final String password, final String salt) {
+    return this.encodePassword(password, salt, saltIteration);
   }
 
-  protected boolean passwordMatch(final String password, final String hashedPassword) {
+  public String encodePassword(final String userPassword) {
+    return encodePassword(userPassword, ServerSecurity.generateRandomSalt());
+  }
+
+  public boolean passwordMatch(final String password, final String hashedPassword) {
     // hashedPassword consist of: ALGORITHM, ITERATIONS_NUMBER, SALT and
     // HASH; parts are joined with dollar character ("$")
     final String[] parts = hashedPassword.split("\\$");
@@ -200,9 +256,9 @@ public class ServerSecurity implements ServerPlugin {
       // wrong hash format
       return false;
 
-    final Integer iterations = Integer.parseInt(parts[1]);
+    final int iterations = Integer.parseInt(parts[1]);
     final String salt = parts[2];
-    final String hash = encode(password, salt, iterations);
+    final String hash = encodePassword(password, salt, iterations);
 
     return hash.equals(hashedPassword);
   }
@@ -210,10 +266,10 @@ public class ServerSecurity implements ServerPlugin {
   protected static String generateRandomSalt() {
     final byte[] salt = new byte[SALT_SIZE];
     RANDOM.nextBytes(salt);
-    return new String(Base64.getEncoder().encode(salt));
+    return new String(Base64.getEncoder().encode(salt), DatabaseFactory.getDefaultCharset());
   }
 
-  protected String encode(final String password, final String salt, final int iterations) {
+  protected String encodePassword(final String password, final String salt, final int iterations) {
     if (!saltCache.isEmpty()) {
       final String encoded = saltCache.get(password + "$" + salt + "$" + iterations);
       if (encoded != null)
@@ -230,14 +286,48 @@ public class ServerSecurity implements ServerPlugin {
     return encoded;
   }
 
-  public void saveConfiguration() throws IOException {
-    securityRepository.saveConfiguration(users);
+  public List<JSONObject> usersToJSON() {
+    final List<JSONObject> jsonl = new ArrayList<>(users.size());
+
+    for (ServerSecurityUser user : users.values())
+      jsonl.add(user.toJSON());
+
+    return jsonl;
   }
 
-  protected void createDefaultSecurity() throws IOException {
-    String rootPassword = server.getConfiguration().getValueAsString(GlobalConfiguration.SERVER_ROOT_PASSWORD);
+  public JSONObject groupsToJSON() {
+    final JSONObject json = new JSONObject();
+
+    // DATABASES TAKE FROM PREVIOUS CONFIGURATION
+    json.put("databases", groupRepository.getGroups().getJSONObject("databases"));
+    json.put("version", LATEST_VERSION);
+
+    return json;
+  }
+
+  public void saveUsers() {
+    try {
+      usersRepository.save(usersToJSON());
+    } catch (IOException e) {
+      LogManager.instance().log(this, Level.SEVERE, "Error on saving security configuration to file '%s'", e, SecurityUserFileRepository.FILE_NAME);
+    }
+  }
+
+  public void saveGroups() {
+    try {
+      groupRepository.save(groupsToJSON());
+    } catch (IOException e) {
+      LogManager.instance().log(this, Level.SEVERE, "Error on saving security configuration to file '%s'", e, SecurityGroupFileRepository.FILE_NAME);
+    }
+  }
+
+  protected void askForRootPassword() throws IOException {
+    String rootPassword = server != null ?
+        server.getConfiguration().getValueAsString(GlobalConfiguration.SERVER_ROOT_PASSWORD) :
+        GlobalConfiguration.SERVER_ROOT_PASSWORD.getValueAsString();
+
     if (rootPassword == null) {
-      if (server.getConfiguration().getValueAsBoolean(GlobalConfiguration.HA_K8S)) {
+      if (server != null ? server.getConfiguration().getValueAsBoolean(GlobalConfiguration.HA_K8S) : GlobalConfiguration.HA_K8S.getValueAsBoolean()) {
         // UNDER KUBERNETES IF THE ROOT PASSWORD IS NOT SET (USUALLY WITH A SECRET) THE POD MUST TERMINATE
         LogManager.instance()
             .log(this, Level.SEVERE, "Unable to start a server under Kubernetes if the environment variable `arcadedb.server.rootPassword` is not set");
@@ -318,10 +408,27 @@ public class ServerSecurity implements ServerPlugin {
 
       } while (rootPassword == null);
     } else
-      LogManager.instance().log(this, Level.INFO, "Creating root user with provided password");
+      LogManager.instance().log(this, Level.INFO, "Creating root user with the provided password");
 
     credentialsValidator.validateCredentials("root", rootPassword);
 
-    createUser("root", rootPassword, true, null);
+    final String encodedPassword = encodePassword(rootPassword, ServerSecurity.generateRandomSalt());
+
+    if (existsUser("root")) {
+      getUser("root").setPassword(encodedPassword);
+      saveUsers();
+    } else
+      createUser(new JSONObject().put("name", "root").put("password", encodedPassword));
+  }
+
+  protected JSONObject getDatabaseGroupsConfiguration(final String databaseName) {
+    final JSONObject groupDatabases = groupRepository.getGroups().getJSONObject("databases");
+    JSONObject databaseConfiguration = groupDatabases.has(databaseName) ? groupDatabases.getJSONObject(databaseName) : null;
+    if (databaseConfiguration == null)
+      // GET DEFAULT (*) DATABASE GROUPS
+      databaseConfiguration = groupDatabases.has(SecurityManager.ANY) ? groupDatabases.getJSONObject("*") : null;
+    if (databaseConfiguration == null || !databaseConfiguration.has("groups"))
+      return null;
+    return databaseConfiguration.getJSONObject("groups");
   }
 }

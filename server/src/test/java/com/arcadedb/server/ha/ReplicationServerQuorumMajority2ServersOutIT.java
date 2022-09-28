@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.ha;
 
 import com.arcadedb.GlobalConfiguration;
@@ -30,8 +27,8 @@ import com.arcadedb.server.TestCallback;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class ReplicationServerQuorumMajority2ServersOutIT extends ReplicationServerIT {
   private final AtomicInteger messages = new AtomicInteger();
@@ -48,7 +45,7 @@ public class ReplicationServerQuorumMajority2ServersOutIT extends ReplicationSer
         public void onEvent(final TYPE type, final Object object, final ArcadeDBServer server) {
           if (type == TYPE.REPLICA_MSG_RECEIVED) {
             if (messages.incrementAndGet() > 100) {
-              LogManager.instance().log(this, Level.INFO, "TEST: Stopping Replica 1...");
+              LogManager.instance().log(this, Level.FINE, "TEST: Stopping Replica 1...");
               getServer(1).stop();
             }
           }
@@ -61,7 +58,7 @@ public class ReplicationServerQuorumMajority2ServersOutIT extends ReplicationSer
         public void onEvent(final TYPE type, final Object object, final ArcadeDBServer server) {
           if (type == TYPE.REPLICA_MSG_RECEIVED) {
             if (messages.incrementAndGet() > 200) {
-              LogManager.instance().log(this, Level.INFO, "TEST: Stopping Replica 2...");
+              LogManager.instance().log(this, Level.FINE, "TEST: Stopping Replica 2...");
               getServer(2).stop();
             }
           }
@@ -70,7 +67,7 @@ public class ReplicationServerQuorumMajority2ServersOutIT extends ReplicationSer
   }
 
   @Test
-  public void testReplication() {
+  public void testReplication() throws Exception {
     try {
       super.testReplication();
       Assertions.fail("Replication is supposed to fail without enough online servers");

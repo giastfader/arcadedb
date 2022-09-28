@@ -1,14 +1,30 @@
+/*
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.exception.TimeoutException;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 public class FilterNotMatchPatternStep extends AbstractExecutionStep {
 
-  private List<AbstractExecutionStep> subSteps;
+  private final List<AbstractExecutionStep> subSteps;
 
   private ResultSet prevResult = null;
 
@@ -21,7 +37,7 @@ public class FilterNotMatchPatternStep extends AbstractExecutionStep {
 
   @Override
   public ResultSet syncPull(CommandContext ctx, int nRecords) throws TimeoutException {
-    if (!prev.isPresent()) {
+    if (prev.isEmpty()) {
       throw new IllegalStateException("filter step requires a previous step");
     }
     ExecutionStepInternal prevStep = prev.get();
@@ -78,11 +94,7 @@ public class FilterNotMatchPatternStep extends AbstractExecutionStep {
           fetchNextItem();
         }
 
-        if (nextItem != null) {
-          return true;
-        }
-
-        return false;
+        return nextItem != null;
       }
 
       @Override
@@ -152,7 +164,7 @@ public class FilterNotMatchPatternStep extends AbstractExecutionStep {
         return result;
       }
     });
-    subSteps.stream().forEach(step -> plan.chain(step));
+    subSteps.forEach(step -> plan.chain(step));
     return plan;
   }
 
@@ -171,10 +183,5 @@ public class FilterNotMatchPatternStep extends AbstractExecutionStep {
     result.append(spaces);
     result.append("  )");
     return result.toString();
-  }
-
-  @Override
-  public void close() {
-    super.close();
   }
 }

@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.server.ha;
 
@@ -24,9 +22,11 @@ import com.arcadedb.Constants;
 import com.arcadedb.ContextConfiguration;
 import com.arcadedb.GlobalConfiguration;
 import com.arcadedb.database.Binary;
+import com.arcadedb.exception.TimeoutException;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.network.binary.ChannelBinaryServer;
 import com.arcadedb.network.binary.ConnectionException;
+import com.arcadedb.server.ha.message.CommandForwardRequest;
 import com.arcadedb.server.ha.message.HACommand;
 import com.arcadedb.server.ha.message.ReplicaConnectHotResyncResponse;
 import com.arcadedb.server.ha.message.TxForwardRequest;
@@ -35,11 +35,9 @@ import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.Pair;
 import com.conversantmedia.util.concurrent.PushPullBlockingQueue;
 
-import java.io.IOException;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 /**
  * This executor has an intermediate level of buffering managed with a queue. This avoids the Leader to be blocked in case the
@@ -63,9 +61,9 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
   private          long                                               leftOn                = 0;
   private          ChannelBinaryServer                                channel;
   private          STATUS                                             status                = STATUS.JOINING;
-  private          Object                                             lock                  = new Object();
-  private          Object                                             channelOutputLock     = new Object();
-  private          Object                                             channelInputLock      = new Object();
+  private final    Object                                             lock                  = new Object(); // NOT FINAL BECAUSE IT CAN BE MERGED FROM ANOTHER CONNECTION
+  private final    Object                                             channelOutputLock     = new Object();
+  private final    Object                                             channelInputLock      = new Object();
   private volatile boolean                                            shutdownCommunication = false;
 
   // STATS
@@ -131,7 +129,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
         this.channel.writeString(server.getServer().getHttpServer().getListeningAddress());
         this.channel.writeString(this.server.getServerAddressList());
 
-        ha.getServer().log(this, Level.INFO, "Remote Replica server '%s' (%s) successfully connected", remoteServerName, remoteServerAddress);
+        LogManager.instance().log(this, Level.INFO, "Remote Replica server '%s' (%s) successfully connected", remoteServerName, remoteServerAddress);
 
       } finally {
         this.channel.flush();
@@ -140,9 +138,10 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
   }
 
   public void mergeFrom(final Leader2ReplicaNetworkExecutor previousConnection) {
-    lock = previousConnection.lock;
-    senderQueue.addAll(previousConnection.senderQueue);
-    previousConnection.close();
+    synchronized (previousConnection.lock) {
+      senderQueue.addAll(previousConnection.senderQueue);
+      previousConnection.close();
+    }
   }
 
   @Override
@@ -167,20 +166,20 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
 
             switch (status) {
             case ONLINE:
-              server.getServer().log(this, Level.FINE, "Sending message to replica '%s' (buffered=%d)...", remoteServerName, senderQueue.size());
+              LogManager.instance().log(this, Level.FINE, "Sending message to replica '%s' (msgSize=%d buffered=%d)...", remoteServerName, lastMessage.size(),
+                  senderQueue.size());
 
               sendMessage(lastMessage);
               lastMessage = null;
               break;
 
             default:
-              server.getServer().log(this, Level.FINE, "Replica '%s' is not online, waiting and retry (buffered=%d)...", remoteServerName, senderQueue.size());
+              LogManager.instance().log(this, Level.FINE, "Replica '%s' is not online, waiting and retry (buffered=%d)...", remoteServerName, senderQueue.size());
               Thread.sleep(500);
-              continue;
             }
 
           } catch (IOException e) {
-            server.getServer().log(this, Level.INFO, "Error on sending replication message to remote server '%s' (error=%s)", remoteServerName, e);
+            LogManager.instance().log(this, Level.INFO, "Error on sending replication message to remote server '%s' (error=%s)", remoteServerName, e);
             shutdownCommunication = true;
             return;
           } catch (InterruptedException e) {
@@ -189,7 +188,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
           }
         }
 
-        server.getServer().log(this, Level.FINE, "Replication thread to remote server '%s' is off (buffered=%d)", remoteServerName, senderQueue.size());
+        LogManager.instance().log(this, Level.FINE, "Replication thread to remote server '%s' is off (buffered=%d)", remoteServerName, senderQueue.size());
 
       }
     });
@@ -217,7 +216,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
             executeMessage(buffer, lastMessage);
 
           } catch (IOException e) {
-            server.getServer().log(this, Level.INFO, "Error on sending replication message to remote server '%s' (error=%s)", remoteServerName, e);
+            LogManager.instance().log(this, Level.INFO, "Error on sending replication message to remote server '%s' (error=%s)", remoteServerName, e);
             shutdownCommunication = true;
             return;
           } catch (InterruptedException e) {
@@ -226,7 +225,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
           }
         }
 
-        server.getServer().log(this, Level.FINE, "Replication thread to remote server '%s' is off (buffered=%d)", remoteServerName, forwarderQueue.size());
+        LogManager.instance().log(this, Level.FINE, "Replication thread to remote server '%s' is off (buffered=%d)", remoteServerName, forwarderQueue.size());
 
       }
     });
@@ -237,26 +236,33 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
     final Binary buffer = new Binary(8192);
 
     while (!shutdownCommunication) {
+      Pair<ReplicationMessage, HACommand> request = null;
       try {
-        final Pair<ReplicationMessage, HACommand> request = server.getMessageFactory().deserializeCommand(buffer, readRequest());
+        request = server.getMessageFactory().deserializeCommand(buffer, readRequest());
 
         if (request == null) {
           channel.clearInput();
           continue;
         }
 
-        if (request.getSecond() instanceof TxForwardRequest)
+        final HACommand command = request.getSecond();
+
+        LogManager.instance().log(this, Level.FINE, "Leader received message %d from replica %s: %s", request.getFirst().messageNumber, remoteServerName, command);
+
+        if (command instanceof TxForwardRequest || command instanceof CommandForwardRequest)
           // EXECUTE IT AS ASYNC
-          forwarderQueue.offer(request);
+          forwarderQueue.put(request);
         else
           executeMessage(buffer, request);
 
+      } catch (TimeoutException e) {
+        LogManager.instance().log(this, Level.FINE, "Request %s in timeout (cause=%s)", request, e.getCause());
       } catch (IOException e) {
-        server.getServer().log(this, Level.FINE, "IO Error from reading requests (cause=%s)", e.getCause());
+        LogManager.instance().log(this, Level.FINE, "IO Error from reading requests (cause=%s)", e.getCause());
         server.setReplicaStatus(remoteServerName, false);
         close();
       } catch (Exception e) {
-        server.getServer().log(this, Level.SEVERE, "Generic error during applying of request from Leader (cause=%s)", e.toString());
+        LogManager.instance().log(this, Level.SEVERE, "Generic error during applying of request from Leader (cause=%s)", e.toString());
         server.setReplicaStatus(remoteServerName, false);
         close();
       }
@@ -272,7 +278,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
       // SEND THE RESPONSE BACK (USING THE SAME BUFFER)
       server.getMessageFactory().serializeCommand(response, buffer, message.messageNumber);
 
-      server.getServer().log(this, Level.FINE, "Request %s -> %s to '%s'", request.getSecond(), response, remoteServerName);
+      LogManager.instance().log(this, Level.FINE, "Request %s -> %s to '%s'", request.getSecond(), response, remoteServerName);
 
       sendMessage(buffer);
 
@@ -301,56 +307,58 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
   }
 
   public void close() {
-    shutdownCommunication = true;
+    executeInLock((ignore) -> {
+      shutdownCommunication = true;
 
-    try {
-      final Thread qt = senderThread;
-      if (qt != null) {
-        try {
-          qt.join(5000);
-          senderThread = null;
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          // IGNORE IT
+      try {
+        final Thread qt = senderThread;
+        if (qt != null) {
+          try {
+            qt.join(5000);
+            senderThread = null;
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // IGNORE IT
+          }
         }
-      }
 
-      final Thread ft = forwarderThread;
-      if (ft != null) {
-        try {
-          ft.join(5000);
-          forwarderThread = null;
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          // IGNORE IT
+        final Thread ft = forwarderThread;
+        if (ft != null) {
+          try {
+            ft.join(5000);
+            forwarderThread = null;
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // IGNORE IT
+          }
         }
+
+        closeChannel();
+
+      } catch (Exception e) {
+        // IGNORE IT
       }
-
-      closeChannel();
-
-    } catch (Exception e) {
-      // IGNORE IT
-    }
+      return null;
+    });
   }
 
   public boolean enqueueMessage(final Binary message) {
     if (status == STATUS.OFFLINE)
       return false;
 
-    return (boolean) executeInLock(new Callable() {
+    return (boolean) executeInLock(new Callable<>() {
       @Override
       public Object call(Object iArgument) {
         // WRITE DIRECTLY TO THE MESSAGE QUEUE
         if (senderQueue.size() > 1)
-          server.getServer().log(this, Level.FINE, "Buffering request to server '%s' (status=%s buffered=%d)", remoteServerName, status, senderQueue.size());
+          LogManager.instance().log(this, Level.FINE, "Buffering request to server '%s' (status=%s buffered=%d)", remoteServerName, status, senderQueue.size());
 
         if (!senderQueue.offer(message)) {
           if (status == STATUS.OFFLINE)
             return false;
 
           // BACK-PRESSURE
-          server.getServer()
-              .log(this, Level.WARNING, "Applying back-pressure on replicating messages to server '%s' (latency=%s buffered=%d)...", getRemoteServerName(),
+          LogManager.instance().log(this, Level.WARNING, "Applying back-pressure on replicating messages to server '%s' (latency=%s buffered=%d)...", getRemoteServerName(),
                   getLatencyStats(), senderQueue.size());
           try {
             Thread.sleep(1000);
@@ -364,7 +372,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
             return false;
 
           if (!senderQueue.offer(message)) {
-            server.getServer().log(this, Level.INFO, "Timeout on writing request to server '%s', setting it offline...", getRemoteServerName());
+            LogManager.instance().log(this, Level.INFO, "Timeout on writing request to server '%s', setting it offline...", getRemoteServerName());
 
 //            LogManager.instance().log(this, Level.INFO, "THREAD DUMP:\n%s", FileUtils.threadDump());
 
@@ -388,11 +396,11 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
       // NO STATUS CHANGE
       return;
 
-    executeInLock(new Callable() {
+    executeInLock(new Callable<>() {
       @Override
       public Object call(Object iArgument) {
         Leader2ReplicaNetworkExecutor.this.status = status;
-        Leader2ReplicaNetworkExecutor.this.server.getServer().log(this, Level.INFO, "Replica server '%s' is %s", remoteServerName, status);
+        LogManager.instance().log(this, Level.INFO, "Replica server '%s' is %s", remoteServerName, status);
 
         Leader2ReplicaNetworkExecutor.this.leftOn = status == STATUS.OFFLINE ? 0 : System.currentTimeMillis();
 
@@ -456,8 +464,8 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
   public String getThroughputStats() {
     if (totalBytes == 0)
       return "";
-    return FileUtils.getSizeAsString(totalBytes) + " (" + FileUtils
-        .getSizeAsString((int) (((double) totalBytes / (System.currentTimeMillis() - joinedOn)) * 1000)) + "/s)";
+    return FileUtils.getSizeAsString(totalBytes) + " (" + FileUtils.getSizeAsString(
+        (int) (((double) totalBytes / (System.currentTimeMillis() - joinedOn)) * 1000)) + "/s)";
   }
 
   public void sendMessage(final Binary msg) throws IOException {
@@ -479,7 +487,7 @@ public class Leader2ReplicaNetworkExecutor extends Thread {
   }
 
   // DO I NEED THIS?
-  protected Object executeInLock(final Callable callback) {
+  protected Object executeInLock(final Callable<Object, Object> callback) {
     synchronized (lock) {
       return callback.call(null);
     }

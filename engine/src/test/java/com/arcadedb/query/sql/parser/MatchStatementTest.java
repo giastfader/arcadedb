@@ -1,9 +1,26 @@
+/*
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
 package com.arcadedb.query.sql.parser;
 
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
+import java.io.*;
 
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -210,7 +227,7 @@ public class MatchStatementTest {
     checkWrongSyntax("MATCH {bucket: 12.1, as: foo} RETURN $elements");
   }
 
-  //@Test
+  @Test
   public void testNot() {
     checkRightSyntax("MATCH {bucket:v, as: foo}, NOT {as:foo}-->{as:bar} RETURN $elements");
   }
@@ -221,7 +238,7 @@ public class MatchStatementTest {
         "MATCH {type: 'V', as: foo}-->{as:bar} RETURN foo.name, bar.name skip 10 limit 10");
   }
 
-  //@Test
+  @Test
   public void testFieldTraversal() {
     checkRightSyntax(
         "MATCH {type: 'V', as: foo}.toBar{as:bar} RETURN foo.name, bar.name skip 10 limit 10");

@@ -1,43 +1,43 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.ContextConfiguration;
 import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.exception.DatabaseMetadataException;
 import com.arcadedb.log.LogManager;
 
-import java.io.IOException;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 /**
  * Flushes pages to disk asynchronously.
  */
 public class PageManagerFlushThread extends Thread {
-  private final    PageManager                     pageManager;
-  public final     ArrayBlockingQueue<MutablePage> queue;
-  private final    String                          logContext;
-  private volatile boolean                         running = true;
+  private final    PageManager                           pageManager;
+  public final     ArrayBlockingQueue<List<MutablePage>> queue;
+  private final    String                                logContext;
+  private volatile boolean                               running   = true;
+  private final    AtomicBoolean                         suspended = new AtomicBoolean(false); // USED DURING BACKUP
 
   public PageManagerFlushThread(final PageManager pageManager, final ContextConfiguration configuration) {
     super("ArcadeDB AsyncFlush");
@@ -47,16 +47,14 @@ public class PageManagerFlushThread extends Thread {
     this.queue = new ArrayBlockingQueue<>(configuration.getValueAsInteger(GlobalConfiguration.PAGE_FLUSH_QUEUE));
   }
 
-  public void asyncFlush(final MutablePage page) throws InterruptedException {
-    LogManager.instance().log(this, Level.FINE, "Enqueuing flushing page %s in background...", null, page);
-
+  public void scheduleFlushOfPages(final List<MutablePage> pages) throws InterruptedException {
     // TRY TO INSERT THE PAGE IN THE QUEUE UNTIL THE THREAD IS STILL RUNNING
     while (running) {
-      if (queue.offer(page, 1, TimeUnit.SECONDS))
+      if (queue.offer(pages, 1, TimeUnit.SECONDS))
         return;
     }
 
-    LogManager.instance().log(this, Level.SEVERE, "Error on flushing page %s during shutdown of the database", null, page);
+    LogManager.instance().log(this, Level.SEVERE, "Error on flushing pages %s during shutdown of the database", pages);
   }
 
   @Override
@@ -66,7 +64,13 @@ public class PageManagerFlushThread extends Thread {
 
     while (running || !queue.isEmpty()) {
       try {
-        flushStream();
+        if (suspended.get()) {
+          // FLUSH SUSPENDED (BACKUP IN PROGRESS?)
+          Thread.sleep(100);
+          continue;
+        }
+
+        flushPagesFromQueueToDisk();
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
@@ -78,15 +82,26 @@ public class PageManagerFlushThread extends Thread {
     }
   }
 
-  private void flushStream() throws InterruptedException, IOException {
-    final MutablePage page = queue.poll(300L, TimeUnit.MILLISECONDS);
+  private void flushPagesFromQueueToDisk() throws InterruptedException, IOException {
+    final List<MutablePage> pages = queue.poll(300L, TimeUnit.MILLISECONDS);
 
-    if (page != null) {
-      if (LogManager.instance().isDebugEnabled())
-        LogManager.instance().log(this, Level.FINE, "Flushing page %s in bg...", null, page);
-
-      pageManager.flushPage(page);
+    if (pages != null) {
+      for (MutablePage page : pages)
+        try {
+          pageManager.flushPage(page);
+        } catch (DatabaseMetadataException e) {
+          // FILE DELETED, CONTINUE WITH THE NEXT PAGES
+          LogManager.instance().log(this, Level.WARNING, "Error on flushing page '%s' to disk", e, page);
+        }
     }
+  }
+
+  public void setSuspended(final boolean value) {
+    suspended.set(value);
+  }
+
+  public boolean isSuspended() {
+    return suspended.get();
   }
 
   public void close() {

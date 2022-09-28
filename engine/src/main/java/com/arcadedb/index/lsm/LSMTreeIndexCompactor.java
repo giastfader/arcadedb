@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index.lsm;
 
 import com.arcadedb.GlobalConfiguration;
@@ -34,9 +31,9 @@ import com.arcadedb.serializer.BinaryComparator;
 import com.arcadedb.serializer.BinarySerializer;
 import com.arcadedb.utility.FileUtils;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 public class LSMTreeIndexCompactor {
   public LSMTreeIndexCompactor() {
@@ -99,7 +96,7 @@ public class LSMTreeIndexCompactor {
 
     for (int pageIndex = 0; pageIndex < lastImmutablePage; ) {
 
-      final long totalRAMNeeded = (lastImmutablePage - pageIndex + 1) * index.getPageSize();
+      final long totalRAMNeeded = (lastImmutablePage - pageIndex + 1L) * index.getPageSize();
 
       if (totalRAMNeeded > indexCompactionRAM) {
         pagesToCompact = (int) (indexCompactionRAM / index.getPageSize());
@@ -217,8 +214,8 @@ public class LSMTreeIndexCompactor {
           final RID[] ridsArray = new RID[rids.size()];
           rids.toArray(ridsArray);
 
-          final MutablePage newPage = compactedIndex
-              .appendDuringCompaction(keyValueContent, lastPage, currentPageBuffer, compactedPageNumberInSeries, minorKey, ridsArray);
+          final MutablePage newPage = compactedIndex.appendDuringCompaction(keyValueContent, lastPage, currentPageBuffer, compactedPageNumberInSeries, minorKey,
+              ridsArray);
 
           if (newPage != lastPage) {
             ++compactedPageNumberInSeries;
@@ -227,9 +224,8 @@ public class LSMTreeIndexCompactor {
               // NEW PAGE: STORE THE MIN KEY IN THE ROOT PAGE
               final int newPageNum = newPage.getPageId().getPageNumber();
 
-              final MutablePage newRootPage = compactedIndex
-                  .appendDuringCompaction(keyValueContent, rootPage, rootPageBuffer, compactedPageNumberInSeries, minorKey,
-                      new RID[] { new RID(database, 0, newPageNum) });
+              final MutablePage newRootPage = compactedIndex.appendDuringCompaction(keyValueContent, rootPage, rootPageBuffer, compactedPageNumberInSeries,
+                  minorKey, new RID[] { new RID(database, 0, newPageNum) });
 
               LogManager.instance().log(mainIndex, Level.FINE, "- Creating a new entry in index '%s' root page %s->%d (entry in page=%d)", null, index,
                   Arrays.toString(minorKey), newPageNum, index.getCount(rootPage) - 1);
@@ -275,10 +271,14 @@ public class LSMTreeIndexCompactor {
                 compactedIndex.getCount(rootPage));
       }
 
+      final List<MutablePage> modifiedPages = new ArrayList<>(1);
+
       if (lastPage != null)
-        database.getPageManager().updatePage(lastPage, true, false);
+        modifiedPages.add(database.getPageManager().updatePage(lastPage, true));
       if (rootPage != null)
-        database.getPageManager().updatePage(rootPage, true, false);
+        modifiedPages.add(database.getPageManager().updatePage(rootPage, true));
+
+      database.getPageManager().flushPages(modifiedPages, false);
 
       compactedPages += pagesToCompact;
 

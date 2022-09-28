@@ -1,39 +1,51 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.serializer;
 
+import com.arcadedb.database.BaseRecord;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.Document;
+import com.arcadedb.database.EmbeddedDatabase;
+import com.arcadedb.database.EmbeddedDocument;
+import com.arcadedb.database.EmbeddedModifier;
+import com.arcadedb.database.EmbeddedModifierProperty;
+import com.arcadedb.database.Identifiable;
+import com.arcadedb.database.MutableDocument;
+import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
-import com.arcadedb.database.*;
 import com.arcadedb.engine.Dictionary;
 import com.arcadedb.exception.SerializationException;
-import com.arcadedb.graph.*;
+import com.arcadedb.graph.Edge;
+import com.arcadedb.graph.EdgeSegment;
+import com.arcadedb.graph.MutableEdge;
+import com.arcadedb.graph.MutableVertex;
+import com.arcadedb.graph.Vertex;
+import com.arcadedb.graph.VertexInternal;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.query.sql.executor.Result;
 
-import java.lang.reflect.Array;
-import java.math.BigDecimal;
-import java.math.BigInteger;
+import java.lang.reflect.*;
+import java.math.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 /**
  * Default serializer implementation.
@@ -156,13 +168,13 @@ public class BinarySerializer {
   }
 
   public Set<String> getPropertyNames(final Database database, final Binary buffer) {
-    final int headerSize = buffer.getInt();
+    buffer.getInt(); // HEADER-SIZE
     final int properties = (int) buffer.getUnsignedNumber();
     final Set<String> result = new LinkedHashSet<>(properties);
 
     for (int i = 0; i < properties; ++i) {
       final int nameId = (int) buffer.getUnsignedNumber();
-      final long contentPosition = buffer.getUnsignedNumber();
+      buffer.getUnsignedNumber(); //contentPosition
       final String name = database.getSchema().getDictionary().getNameById(nameId);
       result.add(name);
     }
@@ -234,11 +246,14 @@ public class BinarySerializer {
   }
 
   public void serializeValue(final Database database, Binary content, final byte type, Object value) {
+    if( value==null)
+      return;
+
     switch (type) {
     case BinaryTypes.TYPE_NULL:
       break;
     case BinaryTypes.TYPE_COMPRESSED_STRING:
-      content.putUnsignedNumber(((Integer) value).intValue());
+      content.putUnsignedNumber((Integer) value);
       break;
     case BinaryTypes.TYPE_BINARY:
       if (value instanceof byte[])
@@ -284,18 +299,12 @@ public class BinarySerializer {
       content.putBytes(((BigDecimal) value).unscaledValue().toByteArray());
       break;
     case BinaryTypes.TYPE_COMPRESSED_RID: {
-      if (value == null)
-        throw new IllegalArgumentException("RID is null");
-
       final RID rid = ((Identifiable) value).getIdentity();
       content.putNumber(rid.getBucketId());
       content.putNumber(rid.getPosition());
       break;
     }
     case BinaryTypes.TYPE_RID: {
-      if (value == null)
-        throw new IllegalArgumentException("RID is null");
-
       if (value instanceof Result)
         // COMING FROM A QUERY
         value = ((Result) value).getElement().get();
@@ -396,7 +405,7 @@ public class BinarySerializer {
     }
 
     default:
-      LogManager.instance().log(this, Level.INFO, "Error on serializing value '" + value + "', type not supported", null);
+      LogManager.instance().log(this, Level.INFO, "Error on serializing value '" + value + "', type not supported");
     }
   }
 
@@ -494,7 +503,7 @@ public class BinarySerializer {
     }
 
     default:
-      LogManager.instance().log(this, Level.INFO, "Error on deserializing value of type " + type, null);
+      LogManager.instance().log(this, Level.INFO, "Error on deserializing value of type " + type);
       value = null;
     }
     return value;
@@ -504,16 +513,16 @@ public class BinarySerializer {
     final int headerSizePosition = header.position();
     header.putInt(0); // TEMPORARY PLACEHOLDER FOR HEADER SIZE
 
-    final Set<String> propertyNames = record.getPropertyNames();
-    header.putUnsignedNumber(propertyNames.size());
+    final Map<String, Object> properties = record.propertiesAsMap();
+    header.putUnsignedNumber(properties.size());
 
     final Dictionary dictionary = database.getSchema().getDictionary();
 
-    for (String p : propertyNames) {
+    for (Map.Entry<String, Object> entry : properties.entrySet()) {
       // WRITE PROPERTY ID FROM THE DICTIONARY
-      header.putUnsignedNumber(dictionary.getIdByName(p, true));
+      header.putUnsignedNumber(dictionary.getIdByName(entry.getKey(), true));
 
-      Object value = record.get(p);
+      Object value = entry.getValue();
 
       final int startContentPosition = content.position();
 
@@ -553,16 +562,15 @@ public class BinarySerializer {
     final int headerSizePosition = header.position();
     header.putInt(0); // TEMPORARY PLACEHOLDER FOR HEADER SIZE
 
-    final Set<String> propertyNames = properties.keySet();
-    header.putUnsignedNumber(propertyNames.size());
+    header.putUnsignedNumber(properties.size());
 
     final Dictionary dictionary = database.getSchema().getDictionary();
 
-    for (String p : propertyNames) {
+    for (Map.Entry<String, Object> entry : properties.entrySet()) {
       // WRITE PROPERTY ID FROM THE DICTIONARY
-      header.putUnsignedNumber(dictionary.getIdByName(p, true));
+      header.putUnsignedNumber(dictionary.getIdByName(entry.getKey(), true));
 
-      Object value = properties.get(p);
+      Object value = entry.getValue();
 
       final int startContentPosition = content.position();
 

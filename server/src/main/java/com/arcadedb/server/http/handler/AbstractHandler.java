@@ -1,44 +1,48 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.server.http.handler;
 
 import com.arcadedb.Constants;
+import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.database.DatabaseFactory;
+import com.arcadedb.exception.CommandExecutionException;
+import com.arcadedb.exception.CommandSQLParsingException;
 import com.arcadedb.exception.DuplicatedKeyException;
 import com.arcadedb.exception.NeedRetryException;
+import com.arcadedb.exception.RecordNotFoundException;
+import com.arcadedb.exception.TransactionException;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.network.binary.ServerIsNotTheLeaderException;
+import com.arcadedb.security.SecurityUser;
 import com.arcadedb.server.ServerMetrics;
 import com.arcadedb.server.http.HttpServer;
-import com.arcadedb.server.security.ServerSecurity;
 import com.arcadedb.server.security.ServerSecurityException;
+import com.arcadedb.server.security.ServerSecurityUser;
 import io.undertow.server.HttpHandler;
 import io.undertow.server.HttpServerExchange;
 import io.undertow.util.HeaderValues;
 import io.undertow.util.Headers;
 import org.json.JSONObject;
 
-import java.io.IOException;
-import java.util.Base64;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.logging.*;
 
 public abstract class AbstractHandler implements HttpHandler {
   private              boolean    requireAuthentication = true;
@@ -49,16 +53,14 @@ public abstract class AbstractHandler implements HttpHandler {
     this.httpServer = httpServer;
   }
 
-  protected abstract void execute(HttpServerExchange exchange, ServerSecurity.ServerUser user) throws Exception;
+  protected abstract void execute(HttpServerExchange exchange, ServerSecurityUser user) throws Exception;
 
   protected String parseRequestPayload(final HttpServerExchange e) throws IOException {
     final StringBuilder result = new StringBuilder();
     //e.startBlocking();
     e.getRequestReceiver().receiveFullBytes(
         // OK
-        (exchange, data) -> {
-          result.append(new String(data));
-        },
+        (exchange, data) -> result.append(new String(data, DatabaseFactory.getDefaultCharset())),
         // ERROR
         (exchange, err) -> {
           LogManager.instance().log(this, Level.SEVERE, "getFullBytes completed with an error: %s", err, err.getMessage());
@@ -69,7 +71,7 @@ public abstract class AbstractHandler implements HttpHandler {
   }
 
   @Override
-  public void handleRequest(HttpServerExchange exchange) {
+  public void handleRequest(final HttpServerExchange exchange) {
     LogManager.instance().setContext(httpServer.getServer().getServerName());
 
     try {
@@ -78,28 +80,26 @@ public abstract class AbstractHandler implements HttpHandler {
       final HeaderValues authorization = exchange.getRequestHeaders().get("Authorization");
       if (requireAuthentication && (authorization == null || authorization.isEmpty())) {
         exchange.setStatusCode(403);
-        exchange.getResponseSender().send("{ \"error\" : \"No authentication was provided\"}");
+        sendErrorResponse(exchange, 403, "No authentication was provided", null, null);
         return;
       }
 
-      ServerSecurity.ServerUser user = null;
+      ServerSecurityUser user = null;
       if (authorization != null) {
         final String auth = authorization.getFirst();
         if (!auth.startsWith(AUTHORIZATION_BASIC)) {
-          exchange.setStatusCode(403);
-          exchange.getResponseSender().send("{ \"error\" : \"Authentication not supported\"}");
+          sendErrorResponse(exchange, 403, "Authentication not supported", null, null);
           return;
         }
 
         final String authPairCypher = auth.substring(AUTHORIZATION_BASIC.length() + 1);
 
-        final String authPairClear = new String(Base64.getDecoder().decode(authPairCypher));
+        final String authPairClear = new String(Base64.getDecoder().decode(authPairCypher), DatabaseFactory.getDefaultCharset());
 
         final String[] authPair = authPairClear.split(":");
 
         if (authPair.length != 2) {
-          exchange.setStatusCode(403);
-          exchange.getResponseSender().send("{ \"error\" : \"Basic authentication error\"}");
+          sendErrorResponse(exchange, 403, "Basic authentication error", null, null);
           return;
         }
 
@@ -115,32 +115,37 @@ public abstract class AbstractHandler implements HttpHandler {
       }
 
     } catch (ServerSecurityException e) {
-      LogManager.instance().log(this, Level.SEVERE, "Error on command execution (%s)", e, getClass().getSimpleName());
-      exchange.setStatusCode(403);
-      exchange.getResponseSender()
-          .send("{ \"error\" : \"Security error\", \"detail\":\"" + e.toString() + "\", \"exception\": \"" + e.getClass().getName() + "\"}");
+      LogManager.instance().log(this, getErrorLogLevel(), "Security error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 403, "Security error", e, null);
     } catch (ServerIsNotTheLeaderException e) {
-      LogManager.instance().log(this, Level.FINE, "Error on command execution (%s)", e, getClass().getSimpleName());
-      exchange.setStatusCode(400);
-      exchange.getResponseSender().send(
-          "{ \"error\" : \"Cannot execute command\", \"detail\":\"" + e.toString() + "\", \"exception\": \"" + e.getClass().getName()
-              + "\", \"exceptionArg\": \"" + e.getLeaderAddress() + "\"}");
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 400, "Cannot execute command", e, e.getLeaderAddress());
     } catch (NeedRetryException e) {
-      LogManager.instance().log(this, Level.FINE, "Error on command execution (%s)", e, getClass().getSimpleName());
-      exchange.setStatusCode(503);
-      exchange.getResponseSender()
-          .send("{ \"error\" : \"Cannot execute command\", \"detail\":\"" + e.toString() + "\", \"exception\": \"" + e.getClass().getName() + "\"}");
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 503, "Cannot execute command", e, null);
     } catch (DuplicatedKeyException e) {
-      LogManager.instance().log(this, Level.FINE, "Error on command execution (%s)", e, getClass().getSimpleName());
-      exchange.setStatusCode(503);
-      exchange.getResponseSender().send(
-          "{ \"error\" : \"Cannot execute command\", \"detail\":\"" + e.toString() + "\", \"exception\": \"" + e.getClass().getName()
-              + "\", \"exceptionArg\": \"" + e.getIndexName() + "|" + e.getKeys() + "|" + e.getCurrentIndexedRID() + "\" }");
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 503, "Found duplicate key in index", e, e.getIndexName() + "|" + e.getKeys() + "|" + e.getCurrentIndexedRID());
+    } catch (RecordNotFoundException e) {
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 404, "Record not found", e, null);
+    } catch (CommandExecutionException | CommandSQLParsingException e) {
+      Throwable realException = e;
+      if (e.getCause() != null)
+        realException = e.getCause();
+
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 500, "Cannot execute command", realException, null);
+    } catch (TransactionException e) {
+      Throwable realException = e;
+      if (e.getCause() != null)
+        realException = e.getCause();
+
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on transaction execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 500, "Error on transaction commit", realException, null);
     } catch (Exception e) {
-      LogManager.instance().log(this, Level.SEVERE, "Error on command execution (%s)", e, getClass().getSimpleName());
-      exchange.setStatusCode(500);
-      exchange.getResponseSender()
-          .send("{ \"error\" : \"Internal error\", \"detail\":\"" + e.toString() + "\", \"exception\": \"" + e.getClass().getName() + "\"}");
+      LogManager.instance().log(this, getErrorLogLevel(), "Error on command execution (%s)", e, getClass().getSimpleName());
+      sendErrorResponse(exchange, 500, "Internal error", e, null);
     } finally {
       LogManager.instance().setContext(null);
     }
@@ -154,15 +159,43 @@ public abstract class AbstractHandler implements HttpHandler {
     this.requireAuthentication = requireAuthentication;
   }
 
-  protected ServerSecurity.ServerUser authenticate(final String userName, final String userPassword) {
-    return httpServer.getServer().getSecurity().authenticate(userName, userPassword);
+  protected ServerSecurityUser authenticate(final String userName, final String userPassword) {
+    return httpServer.getServer().getSecurity().authenticate(userName, userPassword, null);
   }
 
-  protected JSONObject createResult(final ServerSecurity.ServerUser user) {
-    return new JSONObject().put("user", user.name).put("version", Constants.getVersion());
+  protected JSONObject createResult(final SecurityUser user) {
+    return new JSONObject().put("user", user.getName()).put("version", Constants.getVersion());
   }
 
   protected String decode(final String command) {
-    return command.replace("&amp;", " ").replace("&lt;", "<").replace("&gt;", "<").replace("&quot;", "\"").replace("&#039;", "'");
+    return command.replace("&amp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#039;", "'");
+  }
+
+  protected String error2json(final String error, final String detail, final Throwable exception, final String exceptionArgs, final String help) {
+    final JSONObject json = new JSONObject();
+    json.put("error", error);
+    if (detail != null)
+      json.put("detail", encodeError(detail));
+    if (exception != null)
+      json.put("exception", exception.getClass().getName());
+    if (exceptionArgs != null)
+      json.put("exceptionArgs", exceptionArgs);
+    if (help != null)
+      json.put("help", help);
+    return json.toString();
+  }
+
+  protected String encodeError(final String message) {
+    return message.replaceAll("\\\\", " ").replaceAll("\n", " ");//.replaceAll("\"", "'");
+  }
+
+  private Level getErrorLogLevel() {
+    return "development".equals(httpServer.getServer().getConfiguration().getValueAsString(GlobalConfiguration.SERVER_MODE)) ? Level.INFO : Level.FINE;
+  }
+
+  private void sendErrorResponse(final HttpServerExchange exchange, final int code, final String errorMessage, final Throwable e, final String exceptionArgs) {
+    if (!exchange.isResponseStarted())
+      exchange.setStatusCode(code);
+    exchange.getResponseSender().send(error2json(errorMessage, e != null ? e.getMessage() : "", e, exceptionArgs, null));
   }
 }

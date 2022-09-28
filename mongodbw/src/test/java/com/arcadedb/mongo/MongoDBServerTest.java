@@ -1,28 +1,25 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.mongo;
 
 import com.arcadedb.GlobalConfiguration;
-import com.arcadedb.database.Database;
+import com.arcadedb.server.BaseGraphServerTest;
 import com.mongodb.MongoClient;
 import com.mongodb.ServerAddress;
 import com.mongodb.client.MongoCursor;
@@ -32,7 +29,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import static com.mongodb.client.model.Filters.*;
+import static com.mongodb.client.model.Filters.and;
+import static com.mongodb.client.model.Filters.eq;
+import static com.mongodb.client.model.Filters.exists;
+import static com.mongodb.client.model.Filters.gt;
+import static com.mongodb.client.model.Filters.lte;
+import static com.mongodb.client.model.Filters.ne;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -54,7 +56,7 @@ public class MongoDBServerTest extends BaseGraphServerTest {
   public void beginTest() {
     super.beginTest();
 
-    Database db = getDatabase(0);
+    getDatabase(0);
 
     client = new MongoClient(new ServerAddress("localhost", DEF_PORT));
     client.getDatabase(getDatabaseName()).createCollection("MongoDBCollection");
@@ -79,38 +81,22 @@ public class MongoDBServerTest extends BaseGraphServerTest {
   @Test
   public void testSimpleInsertQuery() {
     assertEquals(10, collection.countDocuments());
-
     assertEquals(obj, collection.find().first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: \"Jay\" } ")).first());
-
     assertNull(collection.find(BsonDocument.parse("{ name: \"Jay2\" } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $eq: \"Jay\" } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $ne: \"Jay2\" } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $in: [ \"Jay\", \"John\" ] } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $nin: [ \"Jay2\", \"John\" ] } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $lt: \"Jay2\" } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $lte: \"Jay2\" } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $gt: \"A\" } } ")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ name: { $gte: \"A\" } } ")).first());
-
     assertEquals(obj, collection.find(and(gt("name", "A"), lte("name", "Jay"))).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ $or: [ { name: { $eq: 'Jay' } }, { lastName: 'Miner222'} ] }")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse("{ $not: { name: { $eq: 'Jay2' } } }")).first());
-
     assertEquals(obj, collection.find(BsonDocument.parse(
         "{ $and: [ { name: { $eq: 'Jay' } }, { lastName: { $exists: true } }, { lastName: { $eq: 'Miner' } }, { lastName: { $ne: 'Miner22' } } ] }")).first());
-
     assertEquals(obj, collection.find(and(eq("name", "Jay"), exists("lastName"), eq("lastName", "Miner"), ne("lastName", "Miner22"))).first());
   }
 

@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index;
 
 import com.arcadedb.database.DatabaseContext;
@@ -29,8 +26,11 @@ import com.arcadedb.engine.PaginatedComponent;
 import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
 import com.arcadedb.schema.DocumentType;
 import com.arcadedb.schema.EmbeddedSchema;
+import com.arcadedb.schema.Type;
+import com.arcadedb.serializer.BinaryComparator;
+import org.json.JSONObject;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 
 /**
@@ -41,8 +41,9 @@ import java.util.*;
  */
 public class TypeIndex implements RangeIndex, IndexInternal {
   private final String              logicName;
-  private       List<IndexInternal> indexesOnBuckets = new ArrayList<>();
+  private final List<IndexInternal> indexesOnBuckets = new ArrayList<>();
   private final DocumentType        type;
+  private       boolean             valid            = true;
 
   public TypeIndex(final String logicName, final DocumentType type) {
     this.logicName = logicName;
@@ -51,6 +52,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public long countEntries() {
+    checkIsValid();
     long total = 0;
     for (IndexInternal index : indexesOnBuckets)
       total += index.countEntries();
@@ -59,6 +61,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public IndexCursor iterator(final boolean ascendingOrder) {
+    checkIsValid();
     if (!supportsOrderedIterations())
       throw new UnsupportedOperationException("Index '" + getName() + "' does not support ordered iterations");
 
@@ -67,6 +70,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public IndexCursor iterator(final boolean ascendingOrder, final Object[] fromKeys, final boolean inclusive) {
+    checkIsValid();
     if (!supportsOrderedIterations())
       throw new UnsupportedOperationException("Index '" + getName() + "' does not support ordered iterations");
 
@@ -74,19 +78,22 @@ public class TypeIndex implements RangeIndex, IndexInternal {
   }
 
   @Override
-  public IndexCursor range(final Object[] beginKeys, final boolean beginKeysInclusive, final Object[] endKeys, boolean endKeysInclusive) {
+  public IndexCursor range(final boolean ascending, final Object[] beginKeys, final boolean beginKeysInclusive, final Object[] endKeys,
+      boolean endKeysInclusive) {
+    checkIsValid();
     if (!supportsOrderedIterations())
       throw new UnsupportedOperationException("Index '" + getName() + "' does not support ordered iterations");
 
     final List<IndexCursor> cursors = new ArrayList<>(indexesOnBuckets.size());
     for (Index index : indexesOnBuckets)
-      cursors.add(((RangeIndex) index).range(beginKeys, beginKeysInclusive, endKeys, endKeysInclusive));
+      cursors.add(((RangeIndex) index).range(ascending, beginKeys, beginKeysInclusive, endKeys, endKeysInclusive));
 
-    return new MultiIndexCursor(cursors, -1);
+    return new MultiIndexCursor(cursors, -1, ascending);
   }
 
   @Override
   public IndexCursor get(final Object[] keys) {
+    checkIsValid();
     Set<Identifiable> result = null;
 
     for (Index index : getIndexesByKeys(keys)) {
@@ -109,6 +116,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public IndexCursor get(final Object[] keys, final int limit) {
+    checkIsValid();
     Set<Identifiable> result = null;
 
     for (Index index : getIndexesByKeys(keys)) {
@@ -133,18 +141,21 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public void remove(final Object[] keys) {
+    checkIsValid();
     for (Index index : getIndexesByKeys(keys))
       index.remove(keys);
   }
 
   @Override
   public void remove(final Object[] keys, final Identifiable rid) {
+    checkIsValid();
     for (Index index : getIndexesByKeys(keys))
       index.remove(keys, rid);
   }
 
   @Override
   public boolean compact() throws IOException, InterruptedException {
+    checkIsValid();
     boolean result = false;
     for (IndexInternal index : indexesOnBuckets)
       if (index.compact())
@@ -154,6 +165,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public boolean isCompacting() {
+    checkIsValid();
     for (Index index : indexesOnBuckets)
       if (index.isCompacting())
         return true;
@@ -162,15 +174,17 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public boolean scheduleCompaction() {
-    boolean result = false;
+    checkIsValid();
     for (Index index : indexesOnBuckets)
-      if (index.scheduleCompaction())
-        result = true;
-    return result;
+      if (!index.scheduleCompaction())
+        return false;
+
+    return true;
   }
 
   @Override
   public EmbeddedSchema.INDEX_TYPE getType() {
+    checkIsValid();
     if (indexesOnBuckets.isEmpty())
       return null;
     return indexesOnBuckets.get(0).getType();
@@ -178,31 +192,38 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public String getTypeName() {
-    if (indexesOnBuckets.isEmpty())
-      return null;
-
-    return indexesOnBuckets.get(0).getTypeName();
+    return type.getName();
   }
 
   @Override
-  public String[] getPropertyNames() {
+  public List<String> getPropertyNames() {
+    checkIsValid();
     return indexesOnBuckets.get(0).getPropertyNames();
   }
 
   @Override
   public void close() {
+    checkIsValid();
     for (IndexInternal index : indexesOnBuckets)
       index.close();
   }
 
   @Override
+  public JSONObject toJSON() {
+    return indexesOnBuckets.get(0).toJSON();
+  }
+
+  @Override
   public void drop() {
+    checkIsValid();
+
     final DocumentType t = type.getSchema().getType(getTypeName());
-    t.removeIndexInternal(this);
 
     for (Index index : new ArrayList<>(indexesOnBuckets))
       type.getSchema().dropIndex(index.getName());
     indexesOnBuckets.clear();
+
+    valid = false;
   }
 
   @Override
@@ -212,6 +233,7 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public Map<String, Long> getStats() {
+    checkIsValid();
     final Map<String, Long> stats = new HashMap<>();
     for (Index index : indexesOnBuckets)
       stats.putAll(((IndexInternal) index).getStats());
@@ -220,21 +242,25 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
   @Override
   public LSMTreeIndexAbstract.NULL_STRATEGY getNullStrategy() {
+    checkIsValid();
     return indexesOnBuckets.get(0).getNullStrategy();
   }
 
   @Override
   public void setNullStrategy(final LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy) {
+    checkIsValid();
     indexesOnBuckets.get(0).setNullStrategy(nullStrategy);
   }
 
   @Override
   public boolean isUnique() {
+    checkIsValid();
     return indexesOnBuckets.get(0).isUnique();
   }
 
   @Override
   public boolean supportsOrderedIterations() {
+    checkIsValid();
     return indexesOnBuckets.get(0).supportsOrderedIterations();
   }
 
@@ -244,9 +270,16 @@ public class TypeIndex implements RangeIndex, IndexInternal {
   }
 
   @Override
+  public int getPageSize() {
+    checkIsValid();
+    return indexesOnBuckets.get(0).getPageSize();
+  }
+
+  @Override
   public long build(final BuildIndexCallback callback) {
+    checkIsValid();
     long total = 0;
-    for (Index index : indexesOnBuckets)
+    for (IndexInternal index : indexesOnBuckets)
       total += index.build(callback);
     return total;
   }
@@ -258,17 +291,17 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
     final TypeIndex index2 = (TypeIndex) obj;
 
-    if (!getName().equals(index2.getName()))
+    if (!BinaryComparator.equalsString(getName(), index2.getName()))
       return false;
 
-    final String[] index1Properties = getPropertyNames();
-    final String[] index2Properties = index2.getPropertyNames();
+    final List<String> index1Properties = getPropertyNames();
+    final List<String> index2Properties = index2.getPropertyNames();
 
-    if (index1Properties.length != index2Properties.length)
+    if (index1Properties.size() != index2Properties.size())
       return false;
 
-    for (int p = 0; p < index1Properties.length; ++p) {
-      if (!index1Properties[p].equals(index2Properties[p]))
+    for (int p = 0; p < index1Properties.size(); ++p) {
+      if (!index1Properties.get(p).equals(index2Properties.get(p)))
         return false;
     }
 
@@ -319,22 +352,57 @@ public class TypeIndex implements RangeIndex, IndexInternal {
   }
 
   @Override
+  public Type[] getKeyTypes() {
+    checkIsValid();
+    return indexesOnBuckets.get(0).getKeyTypes();
+  }
+
+  @Override
+  public byte[] getBinaryKeyTypes() {
+    checkIsValid();
+    return indexesOnBuckets.get(0).getBinaryKeyTypes();
+  }
+
+  @Override
+  public List<Integer> getFileIds() {
+    checkIsValid();
+    final List<Integer> ids = new ArrayList<>(indexesOnBuckets.size() * 2);
+    for (IndexInternal idx : indexesOnBuckets)
+      ids.addAll(idx.getFileIds());
+    return ids;
+  }
+
+  @Override
+  public void setTypeIndex(final TypeIndex typeIndex) {
+    throw new UnsupportedOperationException("setTypeIndex");
+  }
+
+  @Override
+  public TypeIndex getTypeIndex() {
+    return null;
+  }
+
+  @Override
   public int getAssociatedBucketId() {
     return -1;
   }
 
   public void addIndexOnBucket(final IndexInternal index) {
+    checkIsValid();
     if (index instanceof TypeIndex)
       throw new IllegalArgumentException("Invalid subIndex " + index);
 
     indexesOnBuckets.add(index);
+    index.setTypeIndex(this);
   }
 
   public void removeIndexOnBucket(final IndexInternal index) {
+    checkIsValid();
     if (index instanceof TypeIndex)
       throw new IllegalArgumentException("Invalid subIndex " + index);
 
     indexesOnBuckets.remove(index);
+    index.setTypeIndex(null);
   }
 
   public IndexInternal[] getIndexesOnBuckets() {
@@ -351,5 +419,10 @@ public class TypeIndex implements RangeIndex, IndexInternal {
 
     // SEARCH ON ALL THE UNDERLYING INDEXES
     return indexesOnBuckets;
+  }
+
+  private void checkIsValid() {
+    if (!valid)
+      throw new IndexException("Index '" + getName() + "' is not valid. Probably has been drop or rebuilt");
   }
 }

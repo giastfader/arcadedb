@@ -1,43 +1,41 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.graph;
 
-import com.arcadedb.BaseGraphTest;
 import com.arcadedb.database.Identifiable;
 import com.arcadedb.database.RID;
 import com.arcadedb.database.Record;
 import com.arcadedb.engine.DatabaseChecker;
+import com.arcadedb.exception.DuplicatedKeyException;
 import com.arcadedb.exception.RecordNotFoundException;
 import com.arcadedb.query.sql.executor.CommandContext;
 import com.arcadedb.query.sql.executor.Result;
 import com.arcadedb.query.sql.executor.ResultSet;
 import com.arcadedb.query.sql.executor.SQLEngine;
 import com.arcadedb.query.sql.function.SQLFunctionAbstract;
+import com.arcadedb.schema.EdgeType;
+import com.arcadedb.schema.Schema;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.Iterator;
-import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.*;
+import java.util.concurrent.atomic.*;
 
 public class BasicGraphTest extends BaseGraphTest {
   @Test
@@ -193,7 +191,7 @@ public class BasicGraphTest extends BaseGraphTest {
       final Vertex v1 = (Vertex) database.lookupByRID(root, false);
       Assertions.assertNotNull(v1);
 
-      final MutableVertex v1Copy = (MutableVertex) v1.modify();
+      final MutableVertex v1Copy = v1.modify();
       v1Copy.set("newProperty1", "TestUpdate1");
       v1Copy.save();
 
@@ -206,7 +204,7 @@ public class BasicGraphTest extends BaseGraphTest {
 
       Assertions.assertNotNull(e1);
 
-      final MutableEdge e1Copy = (MutableEdge) e1.modify();
+      final MutableEdge e1Copy = e1.modify();
       e1Copy.set("newProperty2", "TestUpdate2");
       e1Copy.save();
 
@@ -218,7 +216,7 @@ public class BasicGraphTest extends BaseGraphTest {
       Assertions.assertEquals("TestUpdate2", e1CopyReloaded.get("newProperty2"));
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -285,7 +283,7 @@ public class BasicGraphTest extends BaseGraphTest {
 
     } finally {
       database.commit();
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -342,7 +340,7 @@ public class BasicGraphTest extends BaseGraphTest {
 
     } finally {
       database.commit();
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -399,7 +397,7 @@ public class BasicGraphTest extends BaseGraphTest {
 
     } finally {
       database.commit();
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -444,7 +442,7 @@ public class BasicGraphTest extends BaseGraphTest {
       Assertions.assertEquals(v2reloaded, v2reloaded.getVertices(Vertex.DIRECTION.IN).iterator().next());
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -477,7 +475,7 @@ public class BasicGraphTest extends BaseGraphTest {
       }
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -506,7 +504,7 @@ public class BasicGraphTest extends BaseGraphTest {
       Assertions.assertEquals("Ciao", line.getProperty("ciao"));
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -529,7 +527,7 @@ public class BasicGraphTest extends BaseGraphTest {
       Assertions.assertEquals("reflect on this", line.getProperty("testReflectionMethod"));
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -537,28 +535,29 @@ public class BasicGraphTest extends BaseGraphTest {
   public void rollbackEdge() {
     AtomicReference<RID> v1RID = new AtomicReference<>();
 
-    database.transaction((tx) -> {
+    database.transaction(() -> {
       final MutableVertex v1 = database.newVertex(VERTEX1_TYPE_NAME).save();
       v1RID.set(v1.getIdentity());
     });
 
     try {
-      database.transaction((tx) -> {
+      database.transaction(() -> {
         final Vertex v1a = v1RID.get().asVertex();
 
         final MutableVertex v2 = database.newVertex(VERTEX1_TYPE_NAME).save();
 
         v1a.newEdge(EDGE2_TYPE_NAME, v2, false);
         v1a.newEdge(EDGE2_TYPE_NAME, v2, true);
-        //throw new RuntimeException();
+        //throw new ArcadeDBException();
       });
 
       //Assertions.fail();
 
     } catch (RuntimeException e) {
+      // EXPECTED
     }
 
-    database.transaction((tx) -> {
+    database.transaction(() -> {
       final Vertex v1a = v1RID.get().asVertex();
 
       final MutableVertex v2 = database.newVertex(VERTEX1_TYPE_NAME);
@@ -573,7 +572,7 @@ public class BasicGraphTest extends BaseGraphTest {
   public void reuseRollbackedTx() {
     AtomicReference<RID> v1RID = new AtomicReference<>();
 
-    database.transaction((tx) -> {
+    database.transaction(() -> {
       final MutableVertex v1 = database.newVertex(VERTEX1_TYPE_NAME).save();
       v1.save();
       v1RID.set(v1.getIdentity());
@@ -594,8 +593,80 @@ public class BasicGraphTest extends BaseGraphTest {
       Assertions.fail();
 
     } catch (RuntimeException e) {
+      // EXPECTED
     }
 
     Assertions.assertFalse(v1a.isConnectedTo(v2));
+  }
+
+  @Test
+  public void edgeUnivocity() {
+    final MutableVertex[] v1 = new MutableVertex[1];
+    final MutableVertex[] v2 = new MutableVertex[1];
+    database.transaction(() -> {
+      final EdgeType e = database.getSchema().createEdgeType("OnlyOneBetweenVertices");
+      e.createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "@out", "@in");
+
+      v1[0] = database.newVertex(VERTEX1_TYPE_NAME).set("id", 1001).save();
+      v2[0] = database.newVertex(VERTEX1_TYPE_NAME).set("id", 1002).save();
+      v1[0].newEdge("OnlyOneBetweenVertices", v2[0], true);
+    });
+
+    try {
+      database.transaction(() -> v1[0].newEdge("OnlyOneBetweenVertices", v2[0], true));
+      Assertions.fail();
+    } catch (DuplicatedKeyException ex) {
+      // EXPECTED
+    }
+
+    database.transaction(() -> v2[0].newEdge("OnlyOneBetweenVertices", v1[0], true));
+
+    database.transaction(() -> {
+      final Iterable<Edge> edges = v1[0].getEdges(Vertex.DIRECTION.OUT, "OnlyOneBetweenVertices");
+      for (Edge e : edges)
+        e.delete();
+    });
+
+    database.transaction(() -> v1[0].newEdge("OnlyOneBetweenVertices", v2[0], true));
+
+    database.transaction(() -> {
+      final Iterable<Edge> edges = v2[0].getEdges(Vertex.DIRECTION.OUT, "OnlyOneBetweenVertices");
+      for (Edge e : edges)
+        e.delete();
+    });
+
+    database.transaction(() -> v2[0].newEdge("OnlyOneBetweenVertices", v1[0], true));
+  }
+
+  @Test
+  public void edgeUnivocitySQL() {
+    final MutableVertex[] v1 = new MutableVertex[1];
+    final MutableVertex[] v2 = new MutableVertex[1];
+    database.transaction(() -> {
+      database.command("sql", "create edge type OnlyOneBetweenVertices");
+
+      database.command("sql", "create index ON OnlyOneBetweenVertices (`@out`, `@in`) UNIQUE");
+
+      v1[0] = database.newVertex(VERTEX1_TYPE_NAME).set("id", 1001).save();
+      v2[0] = database.newVertex(VERTEX1_TYPE_NAME).set("id", 1002).save();
+      ResultSet result = database.command("sql", "create edge OnlyOneBetweenVertices from ? to ?", v1[0], v2[0]);
+      Assertions.assertTrue(result.hasNext());
+    });
+
+    try {
+      database.transaction(() -> v1[0].newEdge("OnlyOneBetweenVertices", v2[0], true));
+      Assertions.fail();
+    } catch (DuplicatedKeyException ex) {
+      // EXPECTED
+    }
+
+    try {
+      database.transaction(() -> database.command("sql", "create edge OnlyOneBetweenVertices from ? to ?", v1[0], v2[0]));
+      Assertions.fail();
+    } catch (DuplicatedKeyException ex) {
+      // EXPECTED
+    }
+
+    database.transaction(() -> database.command("sql", "create edge OnlyOneBetweenVertices from ? to ? IF NOT EXISTS", v1[0], v2[0]));
   }
 }

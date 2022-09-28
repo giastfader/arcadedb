@@ -1,87 +1,76 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb;
 
 import com.arcadedb.database.Database;
-import com.arcadedb.database.Document;
-import com.arcadedb.database.DocumentCallback;
-import com.arcadedb.database.RID;
 import com.arcadedb.exception.SchemaException;
 import com.arcadedb.graph.MutableVertex;
 import com.arcadedb.schema.VertexType;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.*;
 
 public class PolymorphicTest extends TestHelper {
 
-  private static RID root;
-
   @Override
   protected void beginTest() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        //------------
-        // VEHICLES VERTICES
-        //------------
-        VertexType vehicle = database.getSchema().createVertexType("Vehicle", 3);
-        vehicle.createProperty("brand", String.class);
+    database.transaction(() -> {
+      //------------
+      // VEHICLES VERTICES
+      //------------
+      VertexType vehicle = database.getSchema().createVertexType("Vehicle", 3);
+      vehicle.createProperty("brand", String.class);
 
-        VertexType motorcycle = database.getSchema().createVertexType("Motorcycle", 3);
-        motorcycle.addParentType("Vehicle");
+      VertexType motorcycle = database.getSchema().createVertexType("Motorcycle", 3);
+      motorcycle.addSuperType("Vehicle");
 
-        try {
-          motorcycle.createProperty("brand", String.class);
-          Assertions.fail("Expected to fail by creating the same property name as the parent type");
-        } catch (SchemaException e) {
-        }
-
-        Assertions.assertTrue(database.getSchema().getType("Motorcycle").instanceOf("Vehicle"));
-        database.getSchema().createVertexType("Car", 3).addParentType("Vehicle");
-        Assertions.assertTrue(database.getSchema().getType("Car").instanceOf("Vehicle"));
-
-        database.getSchema().createVertexType("Supercar", 3).addParentType("Car");
-        Assertions.assertTrue(database.getSchema().getType("Supercar").instanceOf("Car"));
-        Assertions.assertTrue(database.getSchema().getType("Supercar").instanceOf("Vehicle"));
-
-        //------------
-        // PEOPLE VERTICES
-        //------------
-        VertexType person = database.getSchema().createVertexType("Person");
-        database.getSchema().createVertexType("Client").addParentType(person);
-        Assertions.assertTrue(database.getSchema().getType("Client").instanceOf("Person"));
-        Assertions.assertFalse(database.getSchema().getType("Client").instanceOf("Vehicle"));
-
-        //------------
-        // EDGES
-        //------------
-        database.getSchema().createEdgeType("Drives");
-        database.getSchema().createEdgeType("Owns").addParentType("Drives");
-
-        Assertions.assertTrue(database.getSchema().getType("Owns").instanceOf("Drives"));
-        Assertions.assertFalse(database.getSchema().getType("Owns").instanceOf("Vehicle"));
+      try {
+        motorcycle.createProperty("brand", String.class);
+        Assertions.fail("Expected to fail by creating the same property name as the parent type");
+      } catch (SchemaException e) {
       }
+
+      Assertions.assertTrue(database.getSchema().getType("Motorcycle").instanceOf("Vehicle"));
+      database.getSchema().createVertexType("Car", 3).addSuperType("Vehicle");
+      Assertions.assertTrue(database.getSchema().getType("Car").instanceOf("Vehicle"));
+
+      database.getSchema().createVertexType("Supercar", 3).addSuperType("Car");
+      Assertions.assertTrue(database.getSchema().getType("Supercar").instanceOf("Car"));
+      Assertions.assertTrue(database.getSchema().getType("Supercar").instanceOf("Vehicle"));
+
+      //------------
+      // PEOPLE VERTICES
+      //------------
+      VertexType person = database.getSchema().createVertexType("Person");
+      database.getSchema().createVertexType("Client").addSuperType(person);
+      Assertions.assertTrue(database.getSchema().getType("Client").instanceOf("Person"));
+      Assertions.assertFalse(database.getSchema().getType("Client").instanceOf("Vehicle"));
+
+      //------------
+      // EDGES
+      //------------
+      database.getSchema().createEdgeType("Drives");
+      database.getSchema().createEdgeType("Owns").addSuperType("Drives");
+
+      Assertions.assertTrue(database.getSchema().getType("Owns").instanceOf("Drives"));
+      Assertions.assertFalse(database.getSchema().getType("Owns").instanceOf("Vehicle"));
     });
 
     final Database db = database;
@@ -115,8 +104,6 @@ public class PolymorphicTest extends TestHelper {
     luca.newEdge("Drives", ferrari, true, "since", "2018");
 
     db.commit();
-
-    root = luca.getIdentity();
   }
 
   @Test
@@ -187,13 +174,10 @@ public class PolymorphicTest extends TestHelper {
   private int scanAndCountType(final Database db, final String type, final boolean polymorphic) {
     // NON POLYMORPHIC COUNTING
     final AtomicInteger counter = new AtomicInteger();
-    db.scanType(type, polymorphic, new DocumentCallback() {
-      @Override
-      public boolean onRecord(Document record) {
-        Assertions.assertTrue(db.getSchema().getType(record.getTypeName()).instanceOf(type));
-        counter.incrementAndGet();
-        return true;
-      }
+    db.scanType(type, polymorphic, record -> {
+      Assertions.assertTrue(db.getSchema().getType(record.getTypeName()).instanceOf(type));
+      counter.incrementAndGet();
+      return true;
     });
     return counter.get();
   }

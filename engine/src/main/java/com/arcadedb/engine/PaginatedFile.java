@@ -1,52 +1,49 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.log.LogManager;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.ByteBuffer;
-import java.nio.channels.ClosedChannelException;
-import java.nio.channels.FileChannel;
-import java.util.logging.Level;
+import java.io.*;
+import java.nio.*;
+import java.nio.channels.*;
+import java.nio.file.*;
+import java.util.logging.*;
+import java.util.zip.*;
 
 public class PaginatedFile {
   public enum MODE {
     READ_ONLY, READ_WRITE
   }
 
-  private final MODE        mode;
-  private       String      filePath;
-  private       String      fileName;
-  private       File        osFile;
-  private       FileChannel channel;
-  private       int         fileId;
-  private       int         pageSize;
-  private       String      componentName;
-  private       String      fileExtension;
-  private       boolean     open;
+  private       RandomAccessFile file;
+  private final MODE             mode;
+  private       String           filePath;
+  private       String           fileName;
+  private       File             osFile;
+  private       FileChannel      channel;
+  private       int              fileId;
+  private       int              pageSize;
+  private       int              version = 0;      // STARTING FROM 21.10.2 COMPONENTS HAVE VERSION IN THE FILE NAME
+  private       String           componentName;
+  private       String           fileExtension;
+  private       boolean          open;
 
   public PaginatedFile() {
     this.mode = MODE.READ_ONLY;
@@ -59,10 +56,17 @@ public class PaginatedFile {
 
   public void close() {
     try {
-      LogManager.instance().log(this, Level.FINE, "DEBUG - closing file %s (id=%d)", null, filePath, fileId);
-      LogManager.instance().flush();
+      LogManager.instance().log(this, Level.FINE, "Closing file %s (id=%d)...", null, filePath, fileId);
 
-      channel.close();
+      if (channel != null) {
+        channel.close();
+        channel = null;
+      }
+
+      if (file != null) {
+        file.close();
+        file = null;
+      }
 
     } catch (IOException e) {
       LogManager.instance().log(this, Level.SEVERE, "Error on closing file %s (id=%d)", e, filePath, fileId);
@@ -70,22 +74,18 @@ public class PaginatedFile {
     this.open = false;
   }
 
-  public void rename(final String newFileName) throws FileNotFoundException {
+  public void rename(final String newFileName) throws IOException {
     close();
-
-    final int pos = filePath.indexOf(fileName);
-    final String dir = filePath.substring(0, pos);
-
-    final File newFile = new File(dir + "/" + newFileName);
+    LogManager.instance().log(this, Level.FINE, "Renaming file %s (id=%d) to %s...", null, filePath, fileId, newFileName);
+    final File newFile = new File(newFileName);
     new File(filePath).renameTo(newFile);
-
     open(newFile.getAbsolutePath(), mode);
-    osFile = newFile;
   }
 
   public void drop() throws IOException {
     close();
-    new File(getFilePath()).delete();
+    LogManager.instance().log(this, Level.FINE, "Deleting file %s (id=%d) to %s...", null, filePath, fileId);
+    Files.delete(Paths.get(getFilePath()));
   }
 
   public long getSize() throws IOException {
@@ -102,6 +102,26 @@ public class PaginatedFile {
 
   public String getFileName() {
     return fileName;
+  }
+
+  public long calculateChecksum() throws IOException {
+    final CRC32 crc = new CRC32();
+
+    final ByteBuffer buffer = ByteBuffer.allocate(getPageSize());
+
+    final long totalPages = getTotalPages();
+    for (int i = 0; i < totalPages; i++) {
+      buffer.clear();
+      channel.read(buffer, pageSize * (long) i);
+
+      buffer.rewind();
+      for (int j = 0; j < pageSize; j++) {
+        final int read = buffer.get(j);
+        crc.update(read);
+      }
+    }
+
+    return crc.getValue();
   }
 
   /**
@@ -196,24 +216,13 @@ public class PaginatedFile {
     return pageSize;
   }
 
+  public int getVersion() {
+    return version;
+  }
+
   @Override
   public String toString() {
     return filePath;
-  }
-
-  public static String getFileNameFromPath(final String filePath) {
-    final String filePrefix = filePath.substring(0, filePath.lastIndexOf("."));
-
-    final String fileName;
-    final int fileIdPos = filePrefix.lastIndexOf(".");
-    if (fileIdPos > -1) {
-      int pos = filePrefix.lastIndexOf("/");
-      fileName = filePrefix.substring(pos + 1, filePrefix.lastIndexOf("."));
-    } else {
-      int pos = filePrefix.lastIndexOf("/");
-      fileName = filePrefix.substring(pos + 1);
-    }
-    return fileName;
   }
 
   private void open(final String filePath, final MODE mode) throws FileNotFoundException {
@@ -222,6 +231,13 @@ public class PaginatedFile {
     String filePrefix = filePath.substring(0, filePath.lastIndexOf("."));
     this.fileExtension = filePath.substring(filePath.lastIndexOf(".") + 1);
 
+    final int versionPos = filePrefix.lastIndexOf(".");
+    if (filePrefix.charAt(versionPos + 1) == 'v') {
+      // STARTING FROM 21.10.2 COMPONENTS HAVE VERSION IN THE FILE NAME
+      version = Integer.parseInt(filePrefix.substring(versionPos + 2));
+      filePrefix = filePrefix.substring(0, versionPos);
+    }
+
     final int pageSizePos = filePrefix.lastIndexOf(".");
     pageSize = Integer.parseInt(filePrefix.substring(pageSizePos + 1));
     filePrefix = filePrefix.substring(0, pageSizePos);
@@ -229,22 +245,23 @@ public class PaginatedFile {
     final int fileIdPos = filePrefix.lastIndexOf(".");
     if (fileIdPos > -1) {
       fileId = Integer.parseInt(filePrefix.substring(fileIdPos + 1));
-      int pos = filePrefix.lastIndexOf("/");
+      int pos = filePrefix.lastIndexOf(File.separator);
       componentName = filePrefix.substring(pos + 1, filePrefix.lastIndexOf("."));
     } else {
       fileId = -1;
-      int pos = filePrefix.lastIndexOf("/");
+      int pos = filePrefix.lastIndexOf(File.separator);
       componentName = filePrefix.substring(pos + 1);
     }
 
-    final int lastSlash = filePath.lastIndexOf("/");
+    final int lastSlash = filePath.lastIndexOf(File.separator);
     if (lastSlash > -1)
       fileName = filePath.substring(lastSlash + 1);
     else
       fileName = filePath;
 
     this.osFile = new File(filePath);
-    this.channel = new RandomAccessFile(osFile, mode == MODE.READ_WRITE ? "rw" : "r").getChannel();
+    this.file = new RandomAccessFile(osFile, mode == MODE.READ_WRITE ? "rw" : "r");
+    this.channel = this.file.getChannel();
     this.open = true;
   }
 }

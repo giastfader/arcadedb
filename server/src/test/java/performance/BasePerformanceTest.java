@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package performance;
 
 import com.arcadedb.Constants;
@@ -29,23 +26,16 @@ import com.arcadedb.database.DatabaseComparator;
 import com.arcadedb.database.RID;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.server.ArcadeDBServer;
+import com.arcadedb.server.TestServerHelper;
 import com.arcadedb.utility.FileUtils;
 import org.junit.jupiter.api.Assertions;
 
-import java.io.BufferedOutputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.PrintWriter;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.logging.*;
 
 import static com.arcadedb.server.BaseGraphServerTest.DEFAULT_PASSWORD_FOR_TESTS;
 
 public abstract class BasePerformanceTest {
-  protected static final String VERTEX1_TYPE_NAME = "V1";
-  protected static final String VERTEX2_TYPE_NAME = "V2";
-  protected static final String EDGE1_TYPE_NAME   = "E1";
-  protected static final String EDGE2_TYPE_NAME   = "E2";
-
   protected static RID              root;
   private          ArcadeDBServer[] servers;
   protected        Database[]       databases;
@@ -130,10 +120,6 @@ public abstract class BasePerformanceTest {
   protected void onBeforeStarting(ArcadeDBServer server) {
   }
 
-  protected boolean isPopulateDatabase() {
-    return true;
-  }
-
   protected ArcadeDBServer getServer(final int i) {
     return servers[i];
   }
@@ -163,7 +149,7 @@ public abstract class BasePerformanceTest {
   }
 
   protected String getDatabasePath(final int serverId) {
-    return GlobalConfiguration.SERVER_DATABASE_DIRECTORY.getValueAsString() + serverId + "/" + getDatabaseName();
+    return GlobalConfiguration.SERVER_DATABASE_DIRECTORY.getValueAsString() + serverId + File.separator + getDatabaseName();
   }
 
   protected ArcadeDBServer getLeaderServer() {
@@ -176,17 +162,6 @@ public abstract class BasePerformanceTest {
     return null;
   }
 
-  protected boolean areAllServersOnline() {
-    final int onlineReplicas = getLeaderServer().getHA().getOnlineReplicas();
-    if (1 + onlineReplicas < getServerCount()) {
-      // NOT ALL THE SERVERS ARE UP, AVOID A QUORUM ERROR
-      LogManager.instance().log(this, Level.INFO, "TEST: Not all the servers are ONLINE (%d), skip this crash...", null, onlineReplicas);
-      getLeaderServer().getHA().printClusterConfiguration();
-      return false;
-    }
-    return true;
-  }
-
   protected int[] getServerToCheck() {
     final int[] result = new int[getServerCount()];
     for (int i = 0; i < result.length; ++i)
@@ -195,9 +170,22 @@ public abstract class BasePerformanceTest {
   }
 
   protected void deleteDatabaseFolders() {
+    if (databases != null)
+      for (int i = 0; i < databases.length; ++i) {
+        if (databases[i] != null && databases[i].isOpen())
+          databases[i].drop();
+      }
+
+    if (servers != null)
+      for (int i = 0; i < getServerCount(); ++i)
+        if (getServer(i).existsDatabase(getDatabaseName()))
+          getServer(i).getDatabase(getDatabaseName()).drop();
+
+    TestServerHelper.checkActiveDatabases();
+
     for (int i = 0; i < getServerCount(); ++i)
-      FileUtils.deleteRecursively(new File(getDatabasePath(i)));
-    FileUtils.deleteRecursively(new File(GlobalConfiguration.SERVER_ROOT_PATH.getValueAsString() + "/replication"));
+      FileUtils.deleteRecursively(new File(GlobalConfiguration.SERVER_DATABASE_DIRECTORY.getValueAsString() + i + File.separator));
+    FileUtils.deleteRecursively(new File(GlobalConfiguration.SERVER_ROOT_PATH.getValueAsString() + File.separator + "replication"));
   }
 
   protected void checkDatabasesAreIdentical() {
@@ -207,13 +195,16 @@ public abstract class BasePerformanceTest {
       final Database db1 = getServerDatabase(servers2Check[0], getDatabaseName());
       final Database db2 = getServerDatabase(servers2Check[i], getDatabaseName());
 
-      LogManager.instance().log(this, Level.INFO, "TEST: Comparing databases '%s' and '%s' are identical...", null, db1, db2);
-      new DatabaseComparator().compare(db1, db2);
+      LogManager.instance()
+          .log(this, Level.INFO, "TEST: Comparing databases '%s' and '%s' are identical...", null, db1.getDatabasePath(), db2.getDatabasePath());
+      try {
+        new DatabaseComparator().compare(db1, db2);
+        LogManager.instance().log(this, Level.INFO, "TEST: OK databases '%s' and '%s' are identical", null, db1.getDatabasePath(), db2.getDatabasePath());
+      } catch (RuntimeException e) {
+        LogManager.instance()
+            .log(this, Level.INFO, "ERROR on comparing databases '%s' and '%s': %s", null, db1.getDatabasePath(), db2.getDatabasePath(), e.getMessage());
+        throw e;
+      }
     }
   }
-
-  protected boolean isPrintingConfigurationAtEveryStep() {
-    return false;
-  }
-
 }

@@ -1,39 +1,35 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.utility;
 
 import com.arcadedb.log.LogManager;
 
-import java.util.Iterator;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.logging.*;
 
 /**
  * Lock manager implementation.
  */
 public class LockManager<RESOURCE, REQUESTER> {
+  public enum LOCK_STATUS {NO, YES, ALREADY_ACQUIRED}
+
   private final ConcurrentHashMap<RESOURCE, ODistributedLock> lockManager = new ConcurrentHashMap<>(256);
 
   private class ODistributedLock {
@@ -48,7 +44,7 @@ public class LockManager<RESOURCE, REQUESTER> {
     }
   }
 
-  public boolean tryLock(final RESOURCE resource, final REQUESTER requester, final long timeout) {
+  public LOCK_STATUS tryLock(final RESOURCE resource, final REQUESTER requester, final long timeout) {
     if (resource == null)
       throw new IllegalArgumentException("Resource to lock is null");
 
@@ -58,8 +54,8 @@ public class LockManager<RESOURCE, REQUESTER> {
     if (currentLock != null) {
       if (currentLock.owner.equals(requester)) {
         // SAME RESOURCE/SERVER, ALREADY LOCKED
-        LogManager.instance().log(this, Level.FINE, "Resource '%s' already locked by requester '%s'", null, resource, currentLock.owner);
-        currentLock = null;
+        LogManager.instance().log(this, Level.FINE, "Resource '%s' already locked by requester '%s'", resource, currentLock.owner);
+        return LOCK_STATUS.ALREADY_ACQUIRED;
       } else {
         // TRY TO RE-LOCK IT UNTIL TIMEOUT IS EXPIRED
         final long startTime = System.currentTimeMillis();
@@ -81,7 +77,7 @@ public class LockManager<RESOURCE, REQUESTER> {
       }
     }
 
-    return currentLock == null;
+    return currentLock == null ? LOCK_STATUS.YES : LOCK_STATUS.NO;
   }
 
   public void unlock(final RESOURCE resource, final REQUESTER requester) {
@@ -90,9 +86,8 @@ public class LockManager<RESOURCE, REQUESTER> {
 
     final ODistributedLock owner = lockManager.remove(resource);
     if (owner != null) {
-      if (!owner.owner.equals(requester)) {
-        throw new LockException("Cannot unlock resource " + resource + " because owner '" + owner.owner + "' <> requester '" + requester + "'");
-      }
+      if (!owner.owner.equals(requester))
+        throw new LockException("Cannot unlock resource '" + resource + "' because owner '" + owner.owner + "' <> requester '" + requester + "'");
 
       // NOTIFY ANY WAITERS
       owner.lock.countDown();

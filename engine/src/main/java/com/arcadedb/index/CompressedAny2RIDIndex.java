@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.index;
 
 import com.arcadedb.database.Binary;
@@ -29,8 +26,7 @@ import com.arcadedb.serializer.BinaryComparator;
 import com.arcadedb.serializer.BinarySerializer;
 import com.arcadedb.serializer.BinaryTypes;
 
-import java.util.Iterator;
-import java.util.NoSuchElementException;
+import java.util.*;
 
 /**
  * Map like optimized to avoid stressing the GC by using mechanical sympathy technique + compression of key and values.
@@ -39,7 +35,7 @@ import java.util.NoSuchElementException;
  * <br>
  * A Binary object is used to store the hash table (the first part of it) and then keys and values. The key is serialized in the position
  * pointed by the hash table, then a fixed-size integer containing the next entry (with the same hash) and after that the compressed RID.
- *
+ * <p>
  * TODO support up to 4GB by using unsigned int
  */
 public class CompressedAny2RIDIndex<K> {
@@ -47,8 +43,8 @@ public class CompressedAny2RIDIndex<K> {
   private final BinarySerializer serializer;
   private final byte             keyBinaryType;
   private final Type             keyType;
-  private       Binary           chunk;
-  private       int              keys;
+  private final Binary           chunk;
+  private final int              keys;
   private       int              totalEntries   = 0;
   private       int              totalUsedSlots = 0;
 
@@ -155,7 +151,7 @@ public class CompressedAny2RIDIndex<K> {
     if (key == null)
       throw new IllegalArgumentException("Key is null");
 
-    final int hash = Math.abs(key.hashCode()) % keys;
+    final int hash = (key.hashCode() & 0x7fffffff) % keys;
 
     final int pos = threadBuffer.getInt(hash * Binary.INT_SERIALIZED_SIZE);
     if (pos == 0)
@@ -188,7 +184,7 @@ public class CompressedAny2RIDIndex<K> {
     if (value == null)
       throw new IllegalArgumentException("Value is null");
 
-    final int hash = Math.abs(key.hashCode()) % keys;
+    final int hash = (key.hashCode() & 0x7fffffff) % keys;
 
     synchronized (this) {
       final int pos = chunk.getInt(hash * Binary.INT_SERIALIZED_SIZE);

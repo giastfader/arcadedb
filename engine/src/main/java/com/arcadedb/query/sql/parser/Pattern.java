@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.parser;
 
 import com.arcadedb.exception.CommandSQLParsingException;
@@ -26,13 +23,13 @@ import com.arcadedb.query.sql.executor.PatternEdge;
 import com.arcadedb.query.sql.executor.PatternNode;
 
 import java.util.*;
-import java.util.stream.Collectors;
+import java.util.stream.*;
 
 /**
  * Created by luigidellaquila on 28/07/15.
  */
 public class Pattern {
-  public Map<String, PatternNode> aliasToNode = new LinkedHashMap<String, PatternNode>();
+  public Map<String, PatternNode> aliasToNode = new LinkedHashMap<>();
   public int                      numOfEdges  = 0;
 
   public void addExpression(MatchExpression expression) {
@@ -76,8 +73,7 @@ public class Pattern {
               "In current MATCH version, optional nodes are allowed only on right terminal nodes, eg. {} --> {optional:true} is allowed, {optional:true} <-- {} is not. ");
         }
         if (node.in.size() == 0) {
-          throw new CommandSQLParsingException(
-              "In current MATCH version, optional nodes must have at least one incoming pattern edge");
+          throw new CommandSQLParsingException("In current MATCH version, optional nodes must have at least one incoming pattern edge");
         }
         //        if (node.in.size() != 1) {
         //          throw new OCommandSQLParsingException("In current MATCH version, optional nodes are allowed only as single terminal nodes. ");
@@ -92,8 +88,7 @@ public class Pattern {
    * @return
    */
   public List<Pattern> getDisjointPatterns() {
-    Map<PatternNode, String> reverseMap = new IdentityHashMap<>();
-    reverseMap.putAll(this.aliasToNode.entrySet().stream().collect(Collectors.toMap(x -> x.getValue(), x -> x.getKey())));
+    Map<PatternNode, String> reverseMap = new IdentityHashMap<>(this.aliasToNode.entrySet().stream().collect(Collectors.toMap(Map.Entry::getValue, Map.Entry::getKey)));
 
     List<Pattern> result = new ArrayList<>();
     while (!reverseMap.isEmpty()) {

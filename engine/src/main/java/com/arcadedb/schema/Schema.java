@@ -1,34 +1,31 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.schema;
 
 import com.arcadedb.engine.Bucket;
 import com.arcadedb.engine.Dictionary;
 import com.arcadedb.engine.PaginatedComponent;
 import com.arcadedb.index.Index;
+import com.arcadedb.index.TypeIndex;
 import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
 
-import java.util.Collection;
-import java.util.TimeZone;
+import java.util.*;
 
 public interface Schema {
 
@@ -54,30 +51,30 @@ public interface Schema {
 
   Index getIndexByName(String indexName);
 
-  Index createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String... propertyNames);
+  TypeIndex createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String... propertyNames);
 
-  Index createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize);
+  TypeIndex createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize);
 
-  Index createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
+  TypeIndex createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
       Index.BuildIndexCallback callback);
 
-  Index createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
+  TypeIndex createTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
       LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, Index.BuildIndexCallback callback);
 
-  Index getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String... propertyNames);
+  TypeIndex getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String... propertyNames);
 
-  Index getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize);
+  TypeIndex getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize);
 
-  Index getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
+  TypeIndex getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
       Index.BuildIndexCallback callback);
 
-  Index getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
+  TypeIndex getOrCreateTypeIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String[] propertyNames, int pageSize,
       LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, Index.BuildIndexCallback callback);
 
   Index createBucketIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String typeName, String bucketName, String[] propertyNames, int pageSize,
       LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy, Index.BuildIndexCallback callback);
 
-  Index createManualIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String indexName, byte[] keyTypes, int pageSize,
+  Index createManualIndex(EmbeddedSchema.INDEX_TYPE indexType, boolean unique, String indexName, Type[] keyTypes, int pageSize,
       LSMTreeIndexAbstract.NULL_STRATEGY nullStrategy);
 
   Dictionary getDictionary();
@@ -102,7 +99,11 @@ public interface Schema {
 
   DocumentType createDocumentType(String typeName, int buckets);
 
+  DocumentType createDocumentType(String typeName, List<Bucket> buckets);
+
   DocumentType createDocumentType(String typeName, int buckets, int pageSize);
+
+  DocumentType createDocumentType(String typeName, List<Bucket> buckets, int pageSize);
 
   DocumentType getOrCreateDocumentType(String typeName);
 
@@ -114,7 +115,11 @@ public interface Schema {
 
   VertexType createVertexType(String typeName, int buckets);
 
+  VertexType createVertexType(String typeName, List<Bucket> buckets);
+
   VertexType createVertexType(String typeName, int buckets, int pageSize);
+
+  VertexType createVertexType(String typeName, List<Bucket> buckets, final int pageSize);
 
   VertexType getOrCreateVertexType(String typeName);
 
@@ -126,7 +131,11 @@ public interface Schema {
 
   EdgeType createEdgeType(String typeName, int buckets);
 
+  EdgeType createEdgeType(String typeName, List<Bucket> buckets);
+
   EdgeType createEdgeType(String typeName, int buckets, int pageSize);
+
+  EdgeType createEdgeType(String typeName, List<Bucket> buckets, int pageSize);
 
   EdgeType getOrCreateEdgeType(String typeName);
 

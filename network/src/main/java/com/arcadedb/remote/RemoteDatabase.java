@@ -1,35 +1,44 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.remote;
 
 import com.arcadedb.ContextConfiguration;
 import com.arcadedb.GlobalConfiguration;
+import com.arcadedb.database.Database;
+import com.arcadedb.database.DatabaseFactory;
 import com.arcadedb.database.RID;
+import com.arcadedb.database.Record;
+import com.arcadedb.exception.ArcadeDBException;
 import com.arcadedb.exception.ConcurrentModificationException;
-import com.arcadedb.exception.*;
+import com.arcadedb.exception.DatabaseOperationException;
+import com.arcadedb.exception.DuplicatedKeyException;
+import com.arcadedb.exception.NeedRetryException;
+import com.arcadedb.exception.RecordNotFoundException;
+import com.arcadedb.exception.SchemaException;
+import com.arcadedb.exception.TimeoutException;
+import com.arcadedb.exception.TransactionException;
 import com.arcadedb.log.LogManager;
 import com.arcadedb.network.binary.QuorumNotReachedException;
 import com.arcadedb.network.binary.ServerIsNotTheLeaderException;
+import com.arcadedb.network.http.HttpUtils;
 import com.arcadedb.query.sql.executor.InternalResultSet;
+import com.arcadedb.query.sql.executor.Result;
 import com.arcadedb.query.sql.executor.ResultInternal;
 import com.arcadedb.query.sql.executor.ResultSet;
 import com.arcadedb.utility.FileUtils;
@@ -38,39 +47,42 @@ import com.arcadedb.utility.RWLockContext;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.*;
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 public class RemoteDatabase extends RWLockContext {
 
-  public static final int                         DEFAULT_PORT              = 2480;
-  private final       String                      originalServer;
-  private final       int                         originalPort;
-  private             int                         apiVersion                = 1;
-  private final       ContextConfiguration        configuration;
-  private final       String                      name;
-  private final       String                      userName;
-  private final       String                      userPassword;
-  private final       List<Pair<String, Integer>> replicaServerList         = new ArrayList<>();
-  private             String                      currentServer;
-  private             int                         currentPort;
-  private             CONNECTION_STRATEGY         connectionStrategy        = CONNECTION_STRATEGY.ROUND_ROBIN;
-  private             Pair<String, Integer>       leaderServer;
-  private             int                         currentReplicaServerIndex = -1;
-  private             int                         timeout                   = 5000;
-  private             String                      protocol                  = "http";
-  private             String                      charset                   = "UTF-8";
+  public static final  int                         DEFAULT_PORT              = 2480;
+  private final        String                      originalServer;
+  private final        int                         originalPort;
+  private              int                         apiVersion                = 1;
+  private final        ContextConfiguration        configuration;
+  private final        String                      databaseName;
+  private final        String                      userName;
+  private final        String                      userPassword;
+  private final        List<Pair<String, Integer>> replicaServerList         = new ArrayList<>();
+  private              String                      currentServer;
+  private              int                         currentPort;
+  private              CONNECTION_STRATEGY         connectionStrategy        = CONNECTION_STRATEGY.ROUND_ROBIN;
+  private              Pair<String, Integer>       leaderServer;
+  private              int                         currentReplicaServerIndex = -1;
+  private              int                         timeout;
+  private static final String                      protocol                  = "http";
+  private static final String                      charset                   = "UTF-8";
+  private              String                      sessionId;
 
-  public RemoteDatabase(final String server, final int port, final String name, final String userName, final String userPassword) {
-    this(server, port, name, userName, userPassword, new ContextConfiguration());
+  public enum CONNECTION_STRATEGY {
+    STICKY, ROUND_ROBIN
   }
 
-  public RemoteDatabase(final String server, final int port, final String name, final String userName, final String userPassword,
+  public RemoteDatabase(final String server, final int port, final String databaseName, final String userName, final String userPassword) {
+    this(server, port, databaseName, userName, userPassword, new ContextConfiguration());
+  }
+
+  public RemoteDatabase(final String server, final int port, final String databaseName, final String userName, final String userPassword,
       final ContextConfiguration configuration) {
     this.originalServer = server;
     this.originalPort = port;
@@ -78,7 +90,7 @@ public class RemoteDatabase extends RWLockContext {
     this.currentServer = originalServer;
     this.currentPort = originalPort;
 
-    this.name = name;
+    this.databaseName = databaseName;
     this.userName = userName;
     this.userPassword = userPassword;
 
@@ -89,7 +101,7 @@ public class RemoteDatabase extends RWLockContext {
   }
 
   public String getName() {
-    return name;
+    return databaseName;
   }
 
   public void create() {
@@ -113,66 +125,118 @@ public class RemoteDatabase extends RWLockContext {
     close();
   }
 
+  public void transaction(final Database.TransactionScope txBlock) {
+    transaction(txBlock, configuration.getValueAsInteger(GlobalConfiguration.TX_RETRIES));
+  }
+
+  public void transaction(final Database.TransactionScope txBlock, int attempts) {
+    if (txBlock == null)
+      throw new IllegalArgumentException("Transaction block is null");
+
+    ArcadeDBException lastException = null;
+
+    if (attempts < 1)
+      attempts = 1;
+
+    for (int retry = 0; retry < attempts; ++retry) {
+      try {
+        begin();
+        txBlock.execute();
+        commit();
+
+        return;
+      } catch (NeedRetryException | DuplicatedKeyException e) {
+        // RETRY
+        lastException = e;
+      } catch (Exception e) {
+        try {
+          rollback();
+        } catch (Throwable t) {
+          // IGNORE IT
+        }
+        throw e;
+      }
+    }
+
+    throw lastException;
+  }
+
+  public void begin() {
+    if (sessionId != null)
+      throw new TransactionException("Transaction already begun");
+
+    try {
+      final HttpURLConnection connection = createConnection("POST", getUrl("begin", databaseName));
+      connection.connect();
+      if (connection.getResponseCode() != 204)
+        throw new TransactionException("Error on transaction begin");
+      sessionId = connection.getHeaderField(HttpUtils.ARCADEDB_SESSION_ID);
+    } catch (Exception e) {
+      throw new TransactionException("Error on transaction begin", e);
+    }
+  }
+
+  public void commit() {
+    if (sessionId == null)
+      throw new TransactionException("Transaction not begun");
+    try {
+      final HttpURLConnection connection = createConnection("POST", getUrl("commit", databaseName));
+      connection.connect();
+      if (connection.getResponseCode() != 204)
+        throw new TransactionException("Error on transaction commit");
+      sessionId = null;
+    } catch (Exception e) {
+      throw new TransactionException("Error on transaction commit", e);
+    }
+  }
+
+  public void rollback() {
+    if (sessionId == null)
+      throw new TransactionException("Transaction not begun");
+    try {
+      final HttpURLConnection connection = createConnection("POST", getUrl("rollback", databaseName));
+      connection.connect();
+      if (connection.getResponseCode() != 204)
+        throw new TransactionException("Error on transaction rollback");
+
+      sessionId = null;
+    } catch (Exception e) {
+      throw new TransactionException("Error on transaction rollback", e);
+    }
+  }
+
+  public Record lookupByRID(final RID rid) {
+    if (rid == null)
+      throw new IllegalArgumentException("Record is null");
+
+    try {
+      final HttpURLConnection connection = createConnection("GET", getUrl("document", databaseName + "/" + rid.getBucketId() + ":" + rid.getPosition()));
+      connection.connect();
+      if (connection.getResponseCode() == 404)
+        throw new RecordNotFoundException("Record " + rid + " not found", rid);
+
+      final JSONObject response = new JSONObject(FileUtils.readStreamAsString(connection.getInputStream(), charset));
+      if (response.has("result"))
+        return json2Record(response.getJSONObject("result"));
+      return null;
+
+    } catch (RecordNotFoundException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new DatabaseOperationException("Error on loading record " + rid, e);
+    }
+  }
+
   public ResultSet command(final String language, final String command, final Object... args) {
     Map<String, Object> params = mapArgs(args);
 
-    return (ResultSet) databaseCommand("command", language, command, params, true, (connection, response) -> {
-      final ResultSet resultSet = new InternalResultSet();
-
-      final JSONArray resultArray = response.getJSONArray("result");
-      for (int i = 0; i < resultArray.length(); ++i) {
-        final JSONObject result = resultArray.getJSONObject(i);
-        ((InternalResultSet) resultSet).add(new ResultInternal(result.toMap()));
-      }
-
-      return resultSet;
-    });
-  }
-
-  private Map<String, Object> mapArgs(Object[] args) {
-    Map<String, Object> params = null;
-    if (args != null && args.length > 0) {
-      if (args.length == 1 && args[0] instanceof Map)
-        params = (Map<String, Object>) args[0];
-      else {
-        params = new HashMap<>();
-        for (Object o : args) {
-          params.put("" + params.size(), o);
-        }
-      }
-    }
-    return params;
+    return (ResultSet) databaseCommand("command", language, command, params, true, (connection, response) -> createResultSet(response));
   }
 
   public ResultSet query(final String language, final String command, final Object... args) {
     Map<String, Object> params = mapArgs(args);
 
-    return (ResultSet) databaseCommand("query", language, command, params, false, new Callback() {
-      @Override
-      public Object call(final HttpURLConnection connection, final JSONObject response) {
-        final ResultSet resultSet = new InternalResultSet();
-
-        final JSONArray resultArray = response.getJSONArray("result");
-        for (int i = 0; i < resultArray.length(); ++i) {
-          final JSONObject result = resultArray.getJSONObject(i);
-          ((InternalResultSet) resultSet).add(new ResultInternal(result.toMap()));
-        }
-
-        return resultSet;
-      }
-    });
-  }
-
-  public void begin() {
-    command("SQL", "begin");
-  }
-
-  public void commit() {
-    command("SQL", "commit");
-  }
-
-  public void rollback() {
-    command("SQL", "rollback");
+    return (ResultSet) databaseCommand("query", language, command, params, false, (connection, response) -> createResultSet(response));
   }
 
   public CONNECTION_STRATEGY getConnectionStrategy() {
@@ -193,7 +257,7 @@ public class RemoteDatabase extends RWLockContext {
 
   @Override
   public String toString() {
-    return name;
+    return databaseName;
   }
 
   private Object serverCommand(final String operation, final String language, final String payloadCommand, final Map<String, Object> params,
@@ -203,7 +267,7 @@ public class RemoteDatabase extends RWLockContext {
 
   private Object databaseCommand(final String operation, final String language, final String payloadCommand, final Map<String, Object> params,
       final boolean requiresLeader, final Callback callback) {
-    return httpCommand(name, operation, language, payloadCommand, params, requiresLeader, true, callback);
+    return httpCommand(databaseName, operation, language, payloadCommand, params, requiresLeader, true, callback);
   }
 
   private Object httpCommand(final String extendedURL, final String operation, final String language, final String payloadCommand,
@@ -215,20 +279,25 @@ public class RemoteDatabase extends RWLockContext {
 
     Pair<String, Integer> connectToServer = leaderIsPreferable ? leaderServer : new Pair<>(currentServer, currentPort);
 
+    String server = null;
+
     for (int retry = 0; retry < maxRetry && connectToServer != null; ++retry) {
-      String url = protocol + "://" + connectToServer.getFirst() + ":" + connectToServer.getSecond() + "/api/v" + apiVersion + "/" + operation;
+      server = connectToServer.getFirst() + ":" + connectToServer.getSecond();
+      String url = protocol + "://" + server + "/api/v" + apiVersion + "/" + operation;
 
       if (extendedURL != null)
         url += "/" + extendedURL;
 
       try {
-        final HttpURLConnection connection = connect(url);
+        final HttpURLConnection connection = createConnection("POST", url);
+        connection.setDoOutput(true);
         try {
 
           if (payloadCommand != null) {
             final JSONObject jsonRequest = new JSONObject();
             jsonRequest.put("language", language);
             jsonRequest.put("command", payloadCommand);
+            jsonRequest.put("serializer", "record");
 
             if (params != null) {
               final JSONObject jsonParams = new JSONObject(params);
@@ -242,15 +311,13 @@ public class RemoteDatabase extends RWLockContext {
             }
           }
 
-          connection.setConnectTimeout(timeout);
-          connection.setReadTimeout(timeout);
           connection.connect();
 
           if (connection.getResponseCode() != 200) {
             String detail;
             String reason;
             String exception;
-            String exceptionArg;
+            String exceptionArgs;
             String responsePayload = null;
             try {
               responsePayload = FileUtils.readStreamAsString(connection.getErrorStream(), charset);
@@ -258,7 +325,7 @@ public class RemoteDatabase extends RWLockContext {
               reason = response.getString("error");
               detail = response.has("detail") ? response.getString("detail") : null;
               exception = response.has("exception") ? response.getString("exception") : null;
-              exceptionArg = response.has("exceptionArg") ? response.getString("exceptionArg") : null;
+              exceptionArgs = response.has("exceptionArgs") ? response.getString("exceptionArgs") : null;
             } catch (Exception e) {
               lastException = e;
               // TODO CHECK IF THE COMMAND NEEDS TO BE RE-EXECUTED OR NOT
@@ -272,14 +339,18 @@ public class RemoteDatabase extends RWLockContext {
               cmd = "-";
 
             if (exception != null) {
+              if (detail == null)
+                detail = "Unknown";
+
               if (exception.equals(ServerIsNotTheLeaderException.class.getName())) {
-                throw new ServerIsNotTheLeaderException(detail.substring(0, detail.lastIndexOf('.')), exceptionArg);
+                final int sep = detail.lastIndexOf('.');
+                throw new ServerIsNotTheLeaderException(sep > -1 ? detail.substring(0, sep) : detail, exceptionArgs);
               } else if (exception.equals(QuorumNotReachedException.class.getName())) {
                 lastException = new QuorumNotReachedException(detail);
                 continue;
-              } else if (exception.equals(DuplicatedKeyException.class.getName())) {
-                final String[] exceptionArgs = exceptionArg.split("\\|");
-                throw new DuplicatedKeyException(exceptionArgs[0], exceptionArgs[1], new RID(null, exceptionArgs[2]));
+              } else if (exception.equals(DuplicatedKeyException.class.getName()) && exceptionArgs != null) {
+                final String[] exceptionArgsParts = exceptionArgs.split("\\|");
+                throw new DuplicatedKeyException(exceptionArgsParts[0], exceptionArgsParts[1], new RID(null, exceptionArgsParts[2]));
               } else if (exception.equals(ConcurrentModificationException.class.getName())) {
                 throw new ConcurrentModificationException(detail);
               } else if (exception.equals(TransactionException.class.getName())) {
@@ -290,7 +361,7 @@ public class RemoteDatabase extends RWLockContext {
                 throw new SchemaException(detail);
               } else
                 // ELSE
-                throw new RemoteException("Error on executing remote operation " + operation + " (cause:" + exception + ")");
+                throw new RemoteException("Error on executing remote operation " + operation + " (cause:" + exception + " detail:" + detail + ")");
             }
 
             final String httpErrorDescription = connection.getResponseMessage();
@@ -318,8 +389,6 @@ public class RemoteDatabase extends RWLockContext {
           connection.disconnect();
         }
 
-      } catch (RemoteException e) {
-        throw e;
       } catch (IOException | ServerIsNotTheLeaderException e) {
         lastException = e;
 
@@ -341,28 +410,45 @@ public class RemoteDatabase extends RWLockContext {
               .log(this, Level.WARNING, "Remote server (%s:%d) seems unreachable, switching to server %s:%d...", null, currentConnectToServer.getFirst(),
                   currentConnectToServer.getSecond(), connectToServer.getFirst(), connectToServer.getSecond());
 
-      } catch (NeedRetryException | DuplicatedKeyException | TransactionException | TimeoutException e) {
+      } catch (RemoteException | NeedRetryException | DuplicatedKeyException | TransactionException | TimeoutException e) {
         throw e;
       } catch (Exception e) {
-        throw new RemoteException("Error on executing remote operation " + operation, e);
+        throw new RemoteException("Error on executing remote operation " + operation + " (cause: " + e.getMessage() + ")", e);
       }
     }
 
     if (lastException instanceof RuntimeException)
       throw (RuntimeException) lastException;
 
-    throw new RemoteException("Error on executing remote operation " + operation, lastException);
+    throw new RemoteException("Error on executing remote operation '" + operation + "' (server=" + server + " retry=" + maxRetry + ")", lastException);
   }
 
-  protected HttpURLConnection connect(final String url) throws IOException {
+  public int getApiVersion() {
+    return apiVersion;
+  }
+
+  public void setApiVersion(final int apiVersion) {
+    this.apiVersion = apiVersion;
+  }
+
+  public interface Callback {
+    Object call(HttpURLConnection iArgument, JSONObject response) throws Exception;
+  }
+
+  protected HttpURLConnection createConnection(final String httpMethod, final String url) throws IOException {
     final HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
     connection.setRequestProperty("charset", "utf-8");
-    connection.setRequestMethod("POST");
+    connection.setRequestMethod(httpMethod);
 
     final String authorization = userName + ":" + userPassword;
-    connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString(authorization.getBytes()));
+    connection.setRequestProperty("Authorization", "Basic " + Base64.getEncoder().encodeToString(authorization.getBytes(DatabaseFactory.getDefaultCharset())));
 
-    connection.setDoOutput(true);
+    connection.setConnectTimeout(timeout);
+    connection.setReadTimeout(timeout);
+
+    if (sessionId != null)
+      connection.setRequestProperty(HttpUtils.ARCADEDB_SESSION_ID, sessionId);
+
     return connection;
   }
 
@@ -422,7 +508,7 @@ public class RemoteDatabase extends RWLockContext {
   private boolean reloadClusterConfiguration() {
     final Pair<String, Integer> oldLeader = leaderServer;
 
-    // ASK TO REPLICA FIRST
+    // ASK REPLICA FIRST
     for (int replicaIdx = 0; replicaIdx < replicaServerList.size(); ++replicaIdx) {
       Pair<String, Integer> connectToServer = replicaServerList.get(replicaIdx);
 
@@ -453,19 +539,60 @@ public class RemoteDatabase extends RWLockContext {
     return leaderServer != null;
   }
 
-  public int getApiVersion() {
-    return apiVersion;
+  private Map<String, Object> mapArgs(Object[] args) {
+    Map<String, Object> params = null;
+    if (args != null && args.length > 0) {
+      if (args.length == 1 && args[0] instanceof Map)
+        params = (Map<String, Object>) args[0];
+      else {
+        params = new HashMap<>();
+        for (Object o : args) {
+          params.put("" + params.size(), o);
+        }
+      }
+    }
+    return params;
   }
 
-  public void setApiVersion(final int apiVersion) {
-    this.apiVersion = apiVersion;
+  private String getUrl(final String command, final String databaseName) {
+    return protocol + "://" + currentServer + ":" + currentPort + "/api/v" + apiVersion + "/" + command + "/" + databaseName;
   }
 
-  public enum CONNECTION_STRATEGY {
-    STICKY, ROUND_ROBIN
+  protected ResultSet createResultSet(final JSONObject response) {
+    final ResultSet resultSet = new InternalResultSet();
+
+    final JSONArray resultArray = response.getJSONArray("result");
+    for (int i = 0; i < resultArray.length(); ++i) {
+      final JSONObject result = resultArray.getJSONObject(i);
+      ((InternalResultSet) resultSet).add(json2Result(result));
+    }
+    return resultSet;
   }
 
-  public interface Callback {
-    Object call(HttpURLConnection iArgument, JSONObject response) throws Exception;
+  protected Result json2Result(final JSONObject result) {
+    final Record record = json2Record(result);
+    if (record == null)
+      return new ResultInternal(result.toMap());
+
+    return new ResultInternal(record);
+  }
+
+  protected Record json2Record(final JSONObject result) {
+    final Map<String, Object> map = result.toMap();
+
+    if (map.containsKey("@cat")) {
+      final String cat = result.getString("@cat");
+      switch (cat) {
+      case "d":
+        return new RemoteImmutableDocument(this, map);
+
+      case "v":
+        return new RemoteImmutableVertex(this, map);
+
+      case "e":
+        return new RemoteImmutableEdge(this, map);
+      }
+    }
+    return null;
   }
 }

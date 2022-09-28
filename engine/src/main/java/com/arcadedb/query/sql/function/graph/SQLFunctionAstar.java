@@ -1,22 +1,20 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.query.sql.function.graph;
 
@@ -38,7 +36,7 @@ import java.util.*;
  * function.
  * <p>
  * The first parameter is source record. The second parameter is destination record. The third parameter is a name of property that
- * represents 'weight' and fourth represnts the map of options.
+ * represents 'weight' and fourth parameter represents the map of options.
  * <p>
  * If property is not defined in edge or is null, distance between vertexes are 0 .
  *
@@ -54,12 +52,7 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
 
   protected Map<Vertex, Double>   gScore = new HashMap<Vertex, Double>();
   protected Map<Vertex, Double>   fScore = new HashMap<Vertex, Double>();
-  protected PriorityQueue<Vertex> open   = new PriorityQueue<Vertex>(1, new Comparator<Vertex>() {
-
-    public int compare(Vertex nodeA, Vertex nodeB) {
-      return Double.compare(fScore.get(nodeA), fScore.get(nodeB));
-    }
-  });
+  protected PriorityQueue<Vertex> open   = new PriorityQueue<Vertex>(1, (nodeA, nodeB) -> Double.compare(fScore.get(nodeA), fScore.get(nodeB)));
 
   public SQLFunctionAstar() {
     super(NAME, 3, 4);
@@ -194,7 +187,7 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
   }
 
   private Vertex getNeighbor(Vertex current, Edge neighborEdge, Database graph) {
-    if (neighborEdge.getOut().equals(current)) {
+    if (neighborEdge.getOut().equals(current.getIdentity())) {
       return toVertex(neighborEdge.getIn());
     }
     return toVertex(neighborEdge.getOut());
@@ -232,7 +225,7 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
     if (additionalParams instanceof Map) {
       mapParams = (Map) additionalParams;
     } else if (additionalParams instanceof Identifiable) {
-      mapParams = ((Document) ((Identifiable) additionalParams).getRecord()).toMap();
+      mapParams = ((Document) ((Identifiable) additionalParams).getRecord()).propertiesAsMap();
     }
     if (mapParams != null) {
       ctx.paramEdgeTypeNames = stringArray(mapParams.get(SQLFunctionAstar.PARAM_EDGE_TYPE_NAMES));
@@ -252,8 +245,8 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
       ctx.paramDFactor = doubleOrDefault(mapParams.get(SQLFunctionAstar.PARAM_D_FACTOR), ctx.paramDFactor);
       if (mapParams.get(SQLFunctionAstar.PARAM_HEURISTIC_FORMULA) != null) {
         if (mapParams.get(SQLFunctionAstar.PARAM_HEURISTIC_FORMULA) instanceof String) {
-          ctx.paramHeuristicFormula = SQLHeuristicFormula
-              .valueOf(stringOrDefault(mapParams.get(SQLFunctionAstar.PARAM_HEURISTIC_FORMULA), "MANHATAN").toUpperCase(Locale.ENGLISH));
+          ctx.paramHeuristicFormula = SQLHeuristicFormula.valueOf(
+              stringOrDefault(mapParams.get(SQLFunctionAstar.PARAM_HEURISTIC_FORMULA), "MANHATTAN").toUpperCase(Locale.ENGLISH));
         } else {
           ctx.paramHeuristicFormula = (SQLHeuristicFormula) mapParams.get(SQLFunctionAstar.PARAM_HEURISTIC_FORMULA);
         }
@@ -278,7 +271,7 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
     Edge e = null;
     while (edges.hasNext()) {
       Edge next = edges.next();
-      if (next.getOut().equals(target) || next.getIn().equals(target)) {
+      if (next.getOut().equals(target.getIdentity()) || next.getIn().equals(target.getIdentity())) {
         e = next;
         break;
       }
@@ -336,8 +329,8 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
       double gy = doubleOrDefault(target.get(paramVertexAxisNames[1]), 0);
 
       switch (paramHeuristicFormula) {
-      case MANHATAN:
-        hresult = getManhatanHeuristicCost(nx, ny, gx, gy, paramDFactor);
+      case MANHATTAN:
+        hresult = getManhattanHeuristicCost(nx, ny, gx, gy, paramDFactor);
         break;
       case MAXAXIS:
         hresult = getMaxAxisHeuristicCost(nx, ny, gx, gy, paramDFactor);
@@ -377,8 +370,8 @@ public class SQLFunctionAstar extends SQLFunctionHeuristicPathFinderAbstract {
           pList.put(paramVertexAxisNames[i], p);
       }
       switch (paramHeuristicFormula) {
-      case MANHATAN:
-        hresult = getManhatanHeuristicCost(paramVertexAxisNames, sList, cList, pList, gList, currentDepth, paramDFactor);
+      case MANHATTAN:
+        hresult = getManhattanHeuristicCost(paramVertexAxisNames, sList, cList, pList, gList, currentDepth, paramDFactor);
         break;
       case MAXAXIS:
         hresult = getMaxAxisHeuristicCost(paramVertexAxisNames, sList, cList, pList, gList, currentDepth, paramDFactor);

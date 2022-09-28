@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Database;
@@ -28,31 +25,42 @@ import com.arcadedb.exception.TimeoutException;
 import com.arcadedb.index.Index;
 import com.arcadedb.index.IndexCursor;
 import com.arcadedb.index.RangeIndex;
-import com.arcadedb.query.sql.parser.*;
+import com.arcadedb.query.sql.parser.AndBlock;
+import com.arcadedb.query.sql.parser.BaseExpression;
+import com.arcadedb.query.sql.parser.BetweenCondition;
+import com.arcadedb.query.sql.parser.BinaryCompareOperator;
+import com.arcadedb.query.sql.parser.BinaryCondition;
+import com.arcadedb.query.sql.parser.BooleanExpression;
+import com.arcadedb.query.sql.parser.ContainsAnyCondition;
+import com.arcadedb.query.sql.parser.EqualsCompareOperator;
+import com.arcadedb.query.sql.parser.Expression;
+import com.arcadedb.query.sql.parser.GeOperator;
+import com.arcadedb.query.sql.parser.GtOperator;
+import com.arcadedb.query.sql.parser.InCondition;
+import com.arcadedb.query.sql.parser.LeOperator;
+import com.arcadedb.query.sql.parser.LtOperator;
+import com.arcadedb.query.sql.parser.PCollection;
+import com.arcadedb.query.sql.parser.ValueExpression;
 import com.arcadedb.utility.MultiIterator;
 import com.arcadedb.utility.Pair;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 
 /**
  * Created by luigidellaquila on 23/07/16.
  */
 public class FetchFromIndexStep extends AbstractExecutionStep {
-  protected RangeIndex        index;
-  protected BooleanExpression condition;
-  private   BinaryCondition   additionalRangeCondition;
-
-  private boolean orderAsc;
-
-  protected String indexName;
-
-  private long cost  = 0;
-  private long count = 0;
-
-  private boolean           inited      = false;
-  private IndexCursor       cursor;
-  private List<IndexCursor> nextCursors = new ArrayList<>();
+  protected     RangeIndex        index;
+  protected     BooleanExpression condition;
+  private       BinaryCondition   additionalRangeCondition;
+  private       boolean           orderAsc;
+  protected     String            indexName;
+  private       long              cost        = 0;
+  private       long              count       = 0;
+  private       boolean           inited      = false;
+  private       IndexCursor       cursor;
+  private final List<IndexCursor> nextCursors = new ArrayList<>();
 
   private MultiIterator<Map.Entry<Object, Identifiable>> customIterator;
 
@@ -125,7 +133,7 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
 
       @Override
       public Optional<ExecutionPlan> getExecutionPlan() {
-        return null;
+        return Optional.empty();
       }
 
       @Override
@@ -163,7 +171,7 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
 
   private void updateIndexStats() {
     //stats
-    OQueryStats stats = OQueryStats.get(ctx.getDatabase());
+    QueryStats stats = QueryStats.get(ctx.getDatabase());
     if (index == null) {
       return;//this could happen, if not inited yet
     }
@@ -171,9 +179,7 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
     boolean range = false;
     int size = 0;
 
-    if (condition == null) {
-      size = 0;
-    } else if (condition instanceof BinaryCondition) {
+    if (condition instanceof BinaryCondition) {
       size = 1;
     } else if (condition instanceof BetweenCondition) {
       size = 1;
@@ -335,10 +341,10 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
 
       final Object[] converted = convertToObjectArray(secondValue);
 
-      if (secondValue.equals(thirdValue) && fromKeyIncluded && toKeyIncluded && index.getPropertyNames().length == converted.length)
+      if (secondValue.equals(thirdValue) && fromKeyIncluded && toKeyIncluded && index.getPropertyNames().size() == converted.length)
         cursor = index.get(converted);
       else if (index.supportsOrderedIterations()) {
-        cursor = index.range(converted, fromKeyIncluded, convertToObjectArray(thirdValue), toKeyIncluded);
+        cursor = index.range(isOrderAsc(), converted, fromKeyIncluded, convertToObjectArray(thirdValue), toKeyIncluded);
       } else if (additionalRangeCondition == null && allEqualities((AndBlock) condition)) {
         cursor = index.iterator(isOrderAsc(), converted, true);
       } else {
@@ -378,12 +384,12 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
     Object value = nextElementInKey.execute(new ResultInternal(), ctx);
     if (value instanceof Iterable && !(value instanceof Identifiable)) {
       List<PCollection> result = new ArrayList<>();
-      for (Object elemInKey : (java.util.Collection) value) {
+      for (Object elemInKey : (Iterable<?>) value) {
         PCollection newHead = new PCollection(-1);
         for (Expression exp : head.getExpressions()) {
           newHead.add(exp.copy());
         }
-        newHead.add(toExpression(elemInKey, ctx));
+        newHead.add(toExpression(elemInKey));
         PCollection tail = key.copy();
         tail.getExpressions().remove(0);
         result.addAll(cartesianProduct(newHead, tail));
@@ -402,11 +408,11 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
 
   }
 
-  private Expression toExpression(Object value, CommandContext ctx) {
+  private Expression toExpression(final Object value) {
     return new ValueExpression(value);
   }
 
-  private Object convertToIndexDefinitionTypes(Object val/*, OType[] types*/) {
+  private Object convertToIndexDefinitionTypes(final Object val/*, OType[] types*/) {
     //TODO
     return val;
 
@@ -451,9 +457,9 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
     final Object secondValue = second.execute((Result) null, ctx);
     final Object thirdValue = third.execute((Result) null, ctx);
     if (isOrderAsc())
-      cursor = index.range(new Object[] { secondValue }, true, new Object[] { thirdValue }, true);
+      cursor = index.range(true, new Object[] { secondValue }, true, new Object[] { thirdValue }, true);
     else
-      cursor = index.range(new Object[] { secondValue }, true, new Object[] { thirdValue }, true);
+      cursor = index.range(false, new Object[] { thirdValue }, true, new Object[] { secondValue }, true);
 
     if (cursor != null)
       fetchNextEntry();
@@ -515,7 +521,7 @@ public class FetchFromIndexStep extends AbstractExecutionStep {
 
     if (operator instanceof EqualsCompareOperator) {
       //return index.get(values);
-      return index.range(values, true, values, true);
+      return index.range(orderAsc, values, true, values, true);
     } else if (operator instanceof GeOperator) {
       return index.iterator(true, values, true);
     } else if (operator instanceof GtOperator) {

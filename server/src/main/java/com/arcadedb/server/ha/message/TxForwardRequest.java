@@ -1,27 +1,29 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb.server.ha.message;
 
-import com.arcadedb.database.*;
 import com.arcadedb.compression.CompressionFactory;
+import com.arcadedb.database.Binary;
+import com.arcadedb.database.DatabaseInternal;
+import com.arcadedb.database.RID;
+import com.arcadedb.database.TransactionContext;
+import com.arcadedb.database.TransactionIndexContext;
 import com.arcadedb.engine.WALFile;
 import com.arcadedb.exception.NeedRetryException;
 import com.arcadedb.exception.TransactionException;
@@ -33,7 +35,7 @@ import com.arcadedb.server.ha.HAServer;
 import com.arcadedb.server.ha.ReplicationException;
 
 import java.util.*;
-import java.util.logging.Level;
+import java.util.logging.*;
 
 /**
  * Forward a transaction to the Leader server to be executed. Apart from the TX content (like with TxRequest), unique keys list is
@@ -47,7 +49,7 @@ public class TxForwardRequest extends TxRequestAbstract {
   }
 
   public TxForwardRequest(final DatabaseInternal database, final Binary bufferChanges,
-      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> keysTx) {
+      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> keysTx) {
     super(database.getName(), bufferChanges);
     writeIndexKeysToBuffer(database, keysTx);
   }
@@ -77,7 +79,8 @@ public class TxForwardRequest extends TxRequestAbstract {
 
     try {
       final WALFile.WALTransaction walTx = readTxFromBuffer();
-      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> keysTx = readIndexKeysFromBuffer(db);
+      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> keysTx = readIndexKeysFromBuffer(
+          db);
 
       // FORWARDED FROM A REPLICA
       db.begin();
@@ -104,20 +107,20 @@ public class TxForwardRequest extends TxRequestAbstract {
   }
 
   protected void writeIndexKeysToBuffer(final DatabaseInternal database,
-      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> indexesChanges) {
+      final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> indexesChanges) {
     final BinarySerializer serializer = database.getSerializer();
 
     uniqueKeysBuffer = new Binary();
 
     uniqueKeysBuffer.putUnsignedNumber(indexesChanges.size());
 
-    for (Map.Entry<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> entry : indexesChanges.entrySet()) {
+    for (Map.Entry<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> entry : indexesChanges.entrySet()) {
       uniqueKeysBuffer.putString(entry.getKey());
-      final Map<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>> indexChanges = entry.getValue();
+      final Map<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>> indexChanges = entry.getValue();
 
       uniqueKeysBuffer.putUnsignedNumber(indexChanges.size());
 
-      for (Map.Entry<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>> keyChange : indexChanges.entrySet()) {
+      for (Map.Entry<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>> keyChange : indexChanges.entrySet()) {
         final TransactionIndexContext.ComparableKey entryKey = keyChange.getKey();
 
         uniqueKeysBuffer.putUnsignedNumber(entryKey.values.length);
@@ -127,11 +130,11 @@ public class TxForwardRequest extends TxRequestAbstract {
           serializer.serializeValue(database, uniqueKeysBuffer, keyType, entryKey.values[k]);
         }
 
-        final Set<TransactionIndexContext.IndexKey> entryValue = keyChange.getValue();
+        final Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey> entryValue = keyChange.getValue();
 
         uniqueKeysBuffer.putUnsignedNumber(entryValue.size());
 
-        for (TransactionIndexContext.IndexKey key : entryValue) {
+        for (TransactionIndexContext.IndexKey key : entryValue.values()) {
           uniqueKeysBuffer.putByte((byte) (key.addOperation ? 1 : 0));
           uniqueKeysBuffer.putUnsignedNumber(key.rid.getBucketId());
           uniqueKeysBuffer.putUnsignedNumber(key.rid.getPosition());
@@ -144,7 +147,7 @@ public class TxForwardRequest extends TxRequestAbstract {
     uniqueKeysBuffer = CompressionFactory.getDefault().compress(uniqueKeysBuffer);
   }
 
-  protected Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> readIndexKeysFromBuffer(
+  protected Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> readIndexKeysFromBuffer(
       final DatabaseInternal database) {
     final BinarySerializer serializer = database.getSerializer();
 
@@ -152,14 +155,15 @@ public class TxForwardRequest extends TxRequestAbstract {
 
     final int totalIndexes = (int) uniqueKeysBuffer.getUnsignedNumber();
 
-    final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>>> indexesMap = new HashMap<>(totalIndexes);
+    final Map<String, TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>>> indexesMap = new HashMap<>(
+        totalIndexes);
 
     for (int indexIdx = 0; indexIdx < totalIndexes; ++indexIdx) {
       final String indexName = uniqueKeysBuffer.getString();
 
       final int totalIndexEntries = (int) uniqueKeysBuffer.getUnsignedNumber();
 
-      final TreeMap<TransactionIndexContext.ComparableKey, Set<TransactionIndexContext.IndexKey>> indexMap = new TreeMap<>();
+      final TreeMap<TransactionIndexContext.ComparableKey, Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey>> indexMap = new TreeMap<>();
       indexesMap.put(indexName, indexMap);
 
       for (int entryIndex = 0; entryIndex < totalIndexEntries; ++entryIndex) {
@@ -173,7 +177,7 @@ public class TxForwardRequest extends TxRequestAbstract {
 
         final int totalKeyEntries = (int) uniqueKeysBuffer.getUnsignedNumber();
 
-        final Set<TransactionIndexContext.IndexKey> values = new HashSet<>(totalKeyEntries);
+        final Map<TransactionIndexContext.IndexKey, TransactionIndexContext.IndexKey> values = new HashMap<>(totalKeyEntries);
         indexMap.put(new TransactionIndexContext.ComparableKey(keyValues), values);
 
         for (int i = 0; i < totalKeyEntries; ++i) {
@@ -181,7 +185,8 @@ public class TxForwardRequest extends TxRequestAbstract {
 
           final RID rid = new RID(database, (int) uniqueKeysBuffer.getUnsignedNumber(), uniqueKeysBuffer.getUnsignedNumber());
 
-          values.add(new TransactionIndexContext.IndexKey(addOperation, keyValues, rid));
+          final TransactionIndexContext.IndexKey v = new TransactionIndexContext.IndexKey(addOperation, keyValues, rid);
+          values.put(v, v);
         }
       }
     }

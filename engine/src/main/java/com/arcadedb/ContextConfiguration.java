@@ -1,39 +1,37 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
 package com.arcadedb;
 
 import com.arcadedb.utility.SystemVariableResolver;
 import org.json.JSONObject;
 
-import java.io.Serializable;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
 
 /**
  * Represents a context configuration where custom setting could be defined for the context only. If not defined, globals will be
  * taken.
  **/
 public class ContextConfiguration implements Serializable {
-  private final Map<String, Object>    config         = new ConcurrentHashMap<String, Object>();
-  private       SystemVariableResolver customResolver = new SystemVariableResolver() {
+  private final           Map<String, Object>    config         = new ConcurrentHashMap<String, Object>();
+  private transient final SystemVariableResolver customResolver = new SystemVariableResolver() {
     @Override
     public String resolve(final String variable) {
       Object result = config.get(variable);
@@ -84,8 +82,8 @@ public class ContextConfiguration implements Serializable {
     final JSONObject cfg = new JSONObject();
     json.put("configuration", cfg);
 
-    for (String k : config.keySet()) {
-      cfg.put(k.substring(GlobalConfiguration.PREFIX.length()), config.get(k));
+    for (Map.Entry<String, Object> entry : config.entrySet()) {
+      cfg.put(entry.getKey().substring(GlobalConfiguration.PREFIX.length()), entry.getValue());
     }
 
     return json.toString();
@@ -106,7 +104,7 @@ public class ContextConfiguration implements Serializable {
   }
 
   public Object getValue(final GlobalConfiguration iConfig) {
-    if (config != null && config.containsKey(iConfig.getKey()))
+    if (config.containsKey(iConfig.getKey()))
       return config.get(iConfig.getKey());
     return iConfig.getValue();
   }
@@ -123,7 +121,7 @@ public class ContextConfiguration implements Serializable {
    */
   public <T extends Enum<T>> T getValueAsEnum(final GlobalConfiguration config, Class<T> enumType) {
     final Object value;
-    if (this.config != null && this.config.containsKey(config.getKey())) {
+    if (this.config.containsKey(config.getKey())) {
       value = this.config.get(config.getKey());
     } else {
       value = config.getValue();
@@ -143,12 +141,12 @@ public class ContextConfiguration implements Serializable {
   }
 
   public boolean hasValue(final String iName) {
-    return config != null && config.containsKey(iName);
+    return config.containsKey(iName);
   }
 
   @SuppressWarnings("unchecked")
   public <T> T getValue(final String iName, final T iDefaultValue) {
-    if (config != null && config.containsKey(iName))
+    if (config.containsKey(iName))
       return (T) config.get(iName);
 
     final String sysProperty = System.getProperty(iName);
@@ -162,7 +160,7 @@ public class ContextConfiguration implements Serializable {
     final Object v = getValue(iConfig);
     if (v == null)
       return false;
-    return v instanceof Boolean ? ((Boolean) v).booleanValue() : Boolean.parseBoolean(v.toString());
+    return v instanceof Boolean ? (Boolean) v : Boolean.parseBoolean(v.toString());
   }
 
   public String getValueAsString(final String iName, final String iDefaultValue) {
@@ -181,21 +179,21 @@ public class ContextConfiguration implements Serializable {
     final Object v = getValue(iConfig);
     if (v == null)
       return 0;
-    return v instanceof Integer ? ((Integer) v).intValue() : Integer.parseInt(v.toString());
+    return v instanceof Integer ? (Integer) v : Integer.parseInt(v.toString());
   }
 
   public long getValueAsLong(final GlobalConfiguration iConfig) {
     final Object v = getValue(iConfig);
     if (v == null)
       return 0;
-    return v instanceof Long ? ((Long) v).longValue() : Long.parseLong(v.toString());
+    return v instanceof Long ? (Long) v : Long.parseLong(v.toString());
   }
 
   public float getValueAsFloat(final GlobalConfiguration iConfig) {
     final Object v = getValue(iConfig);
     if (v == null)
       return 0;
-    return v instanceof Float ? ((Float) v).floatValue() : Float.parseFloat(v.toString());
+    return v instanceof Float ? (Float) v : Float.parseFloat(v.toString());
   }
 
   public int getContextSize() {

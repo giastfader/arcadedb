@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.exception.CommandExecutionException;
@@ -27,10 +24,7 @@ import com.arcadedb.query.sql.parser.Identifier;
 import com.arcadedb.query.sql.parser.LocalResultSet;
 import com.arcadedb.query.sql.parser.Statement;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Created by luigidellaquila on 03/08/16.
@@ -40,19 +34,19 @@ public class LetQueryStep extends AbstractExecutionStep {
   private final Identifier varName;
   private final Statement  query;
 
-  public LetQueryStep(Identifier varName, Statement query, CommandContext ctx, boolean profilingEnabled) {
+  public LetQueryStep(final Identifier varName, final Statement query, final CommandContext ctx, final boolean profilingEnabled) {
     super(ctx, profilingEnabled);
     this.varName = varName;
     this.query = query;
   }
 
   @Override
-  public ResultSet syncPull(CommandContext ctx, int nRecords) throws TimeoutException {
-    if (!getPrev().isPresent()) {
+  public ResultSet syncPull(final CommandContext ctx, final int nRecords) throws TimeoutException {
+    if (getPrev().isEmpty()) {
       throw new CommandExecutionException("Cannot execute a local LET on a query without a target");
     }
     return new ResultSet() {
-      ResultSet source = getPrev().get().syncPull(ctx, nRecords);
+      final ResultSet source = getPrev().get().syncPull(ctx, nRecords);
 
       @Override
       public boolean hasNext() {
@@ -68,16 +62,18 @@ public class LetQueryStep extends AbstractExecutionStep {
         return result;
       }
 
-      private void calculate(ResultInternal result, CommandContext ctx) {
-        BasicCommandContext subCtx = new BasicCommandContext();
+      private void calculate(final ResultInternal result, final CommandContext ctx) {
+        final BasicCommandContext subCtx = new BasicCommandContext();
         subCtx.setDatabase(ctx.getDatabase());
         subCtx.setParentWithoutOverridingChild(ctx);
-        InternalExecutionPlan subExecutionPlan = query.createExecutionPlan(subCtx, profilingEnabled);
-        result.setMetadata(varName.getStringValue(), toList(new LocalResultSet(subExecutionPlan)));
+        final InternalExecutionPlan subExecutionPlan = query.createExecutionPlan(subCtx, profilingEnabled);
+        final List<Result> value = toList(new LocalResultSet(subExecutionPlan));
+        result.setMetadata(varName.getStringValue(), value);
+        ctx.setVariable(varName.getStringValue(), value);
       }
 
-      private List<Result> toList(LocalResultSet oLocalResultSet) {
-        List<Result> result = new ArrayList<>();
+      private List<Result> toList(final LocalResultSet oLocalResultSet) {
+        final List<Result> result = new ArrayList<>();
         while (oLocalResultSet.hasNext()) {
           result.add(oLocalResultSet.next());
         }
@@ -92,7 +88,7 @@ public class LetQueryStep extends AbstractExecutionStep {
 
       @Override
       public Optional<ExecutionPlan> getExecutionPlan() {
-        return null;
+        return Optional.empty();
       }
 
       @Override
@@ -104,7 +100,7 @@ public class LetQueryStep extends AbstractExecutionStep {
 
   @Override
   public String prettyPrint(int depth, int indent) {
-    String spaces = ExecutionStepInternal.getIndent(depth, indent);
+    final String spaces = ExecutionStepInternal.getIndent(depth, indent);
     return spaces + "+ LET (for each record)\n" + spaces + "  " + varName + " = (" + query + ")";
   }
 }

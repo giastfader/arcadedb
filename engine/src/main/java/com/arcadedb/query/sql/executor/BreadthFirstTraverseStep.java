@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
 import com.arcadedb.database.Document;
@@ -157,46 +154,40 @@ public class BreadthFirstTraverseStep extends AbstractTraverseStep {
     tryAddEntryPoint(res, ctx);
   }
 
-  private void addNextEntryPoint(Result nextStep, int depth, List<Identifiable> path, List<Identifiable> stack, CommandContext ctx) {
-    if (!nextStep.isElement()) {
+  private void addNextEntryPoint(final Result nextStep, final int depth, final List<Identifiable> path, final List<Identifiable> stack,
+      final CommandContext ctx) {
+    if (!nextStep.isElement())
       return;
-    }
-    if (this.traversed.contains(nextStep.getElement().get().getIdentity())) {
+
+    if (this.traversed.contains(nextStep.getElement().get().getIdentity()))
       return;
-    }
+
     if (nextStep instanceof TraverseResult) {
       ((TraverseResult) nextStep).depth = depth;
       ((TraverseResult) nextStep).setMetadata("$depth", depth);
-      List<Identifiable> newPath = new ArrayList<>();
-      newPath.addAll(path);
+      final List<Identifiable> newPath = new ArrayList<>(path);
       nextStep.getIdentity().ifPresent(x -> newPath.add(x.getIdentity()));
       ((TraverseResult) nextStep).setMetadata("$path", newPath);
 
-      List reverseStack = new ArrayList();
-      reverseStack.addAll(newPath);
+      final List reverseStack = new ArrayList(newPath);
       Collections.reverse(reverseStack);
-      List newStack = new ArrayList();
-      newStack.addAll(reverseStack);
+      final List newStack = new ArrayList(reverseStack);
       ((TraverseResult) nextStep).setMetadata("$stack", newStack);
 
       tryAddEntryPoint(nextStep, ctx);
     } else {
-      TraverseResult res = new TraverseResult();
+      final TraverseResult res = new TraverseResult();
       res.setElement(nextStep.getElement().get());
       res.depth = depth;
       res.setMetadata("$depth", depth);
-      List<Identifiable> newPath = new ArrayList<>();
-      newPath.addAll(path);
+      List<Identifiable> newPath = new ArrayList<>(path);
       nextStep.getIdentity().ifPresent(x -> newPath.add(x.getIdentity()));
-      ((TraverseResult) nextStep).setMetadata("$path", newPath);
+      res.setMetadata("$path", newPath);
 
-      List reverseStack = new ArrayList();
-      reverseStack.addAll(newPath);
+      List reverseStack = new ArrayList(newPath);
       Collections.reverse(reverseStack);
-      List newStack = new ArrayList();
-      newStack.addAll(reverseStack);
-      ((TraverseResult) nextStep).setMetadata("$stack", newStack);
-
+      List newStack = new ArrayList(reverseStack);
+      res.setMetadata("$stack", newStack);
       tryAddEntryPoint(res, ctx);
     }
   }
@@ -232,11 +223,11 @@ public class BreadthFirstTraverseStep extends AbstractTraverseStep {
     result.append(spaces);
     result.append("+ DEPTH-FIRST TRAVERSE \n");
     result.append(spaces);
-    result.append("  " + projections.toString());
+    result.append("  ").append(projections.toString());
     if (whileClause != null) {
       result.append("\n");
       result.append(spaces);
-      result.append("WHILE " + whileClause.toString());
+      result.append("WHILE ").append(whileClause);
     }
     return result.toString();
   }

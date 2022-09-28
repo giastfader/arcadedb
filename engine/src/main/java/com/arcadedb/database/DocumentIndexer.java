@@ -1,32 +1,29 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.engine.Bucket;
+import com.arcadedb.graph.Edge;
 import com.arcadedb.index.Index;
-import com.arcadedb.index.lsm.LSMTreeIndexAbstract;
 import com.arcadedb.schema.DocumentType;
 
-import java.util.List;
+import java.util.*;
 
 public class DocumentIndexer {
   private final EmbeddedDatabase database;
@@ -62,11 +59,11 @@ public class DocumentIndexer {
 
   public void addToIndex(final Index entry, final RID rid, final Document record) {
     final Index index = entry;
-    final String[] keyNames = entry.getPropertyNames();
+    final List<String> keyNames = entry.getPropertyNames();
 
-    final Object[] keyValues = new Object[keyNames.length];
+    final Object[] keyValues = new Object[keyNames.size()];
     for (int i = 0; i < keyValues.length; ++i)
-      keyValues[i] = record.get(keyNames[i]);
+      keyValues[i] = getPropertyValue(record, keyNames.get(i));
 
     index.put(keyValues, new RID[] { rid });
   }
@@ -86,14 +83,14 @@ public class DocumentIndexer {
       return;
 
     for (Index index : indexes) {
-      final String[] keyNames = index.getPropertyNames();
-      final Object[] oldKeyValues = new Object[keyNames.length];
-      final Object[] newKeyValues = new Object[keyNames.length];
+      final List<String> keyNames = index.getPropertyNames();
+      final Object[] oldKeyValues = new Object[keyNames.size()];
+      final Object[] newKeyValues = new Object[keyNames.size()];
 
       boolean keyValuesAreModified = false;
-      for (int i = 0; i < keyNames.length; ++i) {
-        oldKeyValues[i] = originalRecord.get(keyNames[i]);
-        newKeyValues[i] = modifiedRecord.get(keyNames[i]);
+      for (int i = 0; i < keyNames.size(); ++i) {
+        oldKeyValues[i] = getPropertyValue(originalRecord, keyNames.get(i));
+        newKeyValues[i] = getPropertyValue(modifiedRecord, keyNames.get(i));
 
         if ((newKeyValues[i] == null && oldKeyValues[i] != null) || (newKeyValues[i] != null && !newKeyValues[i].equals(oldKeyValues[i]))) {
           keyValuesAreModified = true;
@@ -106,8 +103,7 @@ public class DocumentIndexer {
         continue;
 
       // REMOVE THE OLD ENTRY KEYS/VALUE AND INSERT THE NEW ONE
-      if (!LSMTreeIndexAbstract.isKeyNull(oldKeyValues))
-        index.remove(oldKeyValues, rid);
+      index.remove(oldKeyValues, rid);
       index.put(newKeyValues, new RID[] { rid });
     }
   }
@@ -130,14 +126,25 @@ public class DocumentIndexer {
         ((RecordInternal) record).unsetDirty();
 
       for (Index index : metadata) {
-        final String[] keyNames = index.getPropertyNames();
-        final Object[] keyValues = new Object[keyNames.length];
-        for (int i = 0; i < keyNames.length; ++i) {
-          keyValues[i] = record.get(keyNames[i]);
+        final List<String> keyNames = index.getPropertyNames();
+        final Object[] keyValues = new Object[keyNames.size()];
+        for (int i = 0; i < keyNames.size(); ++i) {
+          keyValues[i] = getPropertyValue(record, keyNames.get(i));
         }
 
         index.remove(keyValues, record.getIdentity());
       }
     }
+  }
+
+  private Object getPropertyValue(final Document record, final String propertyName) {
+    if (record instanceof Edge) {
+      // EDGE: CHECK FOR SPECIAL CASES @OUT AND @IN
+      if ("@out".equals(propertyName))
+        return ((Edge) record).getOut();
+      else if ("@in".equals(propertyName))
+        return ((Edge) record).getIn();
+    }
+    return record.get(propertyName);
   }
 }

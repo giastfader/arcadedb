@@ -1,33 +1,26 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.query.sql.executor;
 
-import com.arcadedb.database.Document;
-import com.arcadedb.database.Record;
 import com.arcadedb.exception.TimeoutException;
-import com.arcadedb.schema.DocumentType;
 
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * <p>
@@ -36,7 +29,7 @@ import java.util.Optional;
  * <p>
  * The result set returned by syncPull() throws an PCommandExecutionException as soon as it finds a record
  * that cannot be safely deleted (eg. a vertex or an edge)</p>
- * <p>This step is used used in DELETE statement to make sure that you are not deleting vertices or edges without passing for an
+ * <p>This step is used in DELETE statement to make sure that you are not deleting vertices or edges without passing for an
  * explicit DELETE VERTEX/EDGE</p>
  *
  * @author Luigi Dell'Aquila (luigi.dellaquila-(at)-gmail.com)
@@ -62,13 +55,13 @@ public class CheckSafeDeleteStep extends AbstractExecutionStep {
         Result result = upstream.next();
         long begin = profilingEnabled ? System.nanoTime() : 0;
         try {
-          if (result.isElement()) {
-
-            Record record = result.getElement().get();
-            if (record instanceof Document) {
-              Document doc = (Document) record;
-              DocumentType typez = doc.getType();
-              //TODO
+//          if (result.isElement()) {
+//
+//            Record record = result.getElement().get();
+//            if (record instanceof Document) {
+          //TODO
+//              Document doc = (Document) record;
+//              DocumentType typez = doc.getType();
 //              if (typez != null) {
 //                if (typez.getName().equalsIgnoreCase("V") || typez.isSubClassOf("V")) {
 //                  throw new PCommandExecutionException("Cannot safely delete a vertex, please use DELETE VERTEX or UNSAFE");
@@ -77,8 +70,8 @@ public class CheckSafeDeleteStep extends AbstractExecutionStep {
 //                  throw new PCommandExecutionException("Cannot safely delete an edge, please use DELETE EDGE or UNSAFE");
 //                }
 //              }
-            }
-          }
+//            }
+//          }
           return result;
         } finally {
           if (profilingEnabled) {
@@ -94,7 +87,7 @@ public class CheckSafeDeleteStep extends AbstractExecutionStep {
 
       @Override
       public Optional<ExecutionPlan> getExecutionPlan() {
-        return null;
+        return Optional.empty();
       }
 
       @Override
@@ -111,7 +104,7 @@ public class CheckSafeDeleteStep extends AbstractExecutionStep {
     result.append(spaces);
     result.append("+ CHECK SAFE DELETE");
     if (profilingEnabled) {
-      result.append(" (" + getCostFormatted() + ")");
+      result.append(" (").append(getCostFormatted()).append(")");
     }
     return result.toString();
   }

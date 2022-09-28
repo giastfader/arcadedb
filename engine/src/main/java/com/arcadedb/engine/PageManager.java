@@ -1,24 +1,21 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.engine;
 
 import com.arcadedb.ContextConfiguration;
@@ -30,14 +27,11 @@ import com.arcadedb.log.LogManager;
 import com.arcadedb.utility.FileUtils;
 import com.arcadedb.utility.LockContext;
 
-import java.io.IOException;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
+import java.io.*;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 /**
  * Manages pages from disk to RAM. Each page can have different size.
@@ -62,12 +56,10 @@ public class PageManager extends LockContext {
   private final AtomicLong                           totalConcurrentModificationExceptions = new AtomicLong();
   private final AtomicLong                           evictionRuns                          = new AtomicLong();
   private final AtomicLong                           pagesEvicted                          = new AtomicLong();
-
-  private       long                   lastCheckForRAM        = 0;
-  private final long                   lastLowRAM             = 0;
-  private final long                   highPressureRAMCounter = 0;
-  private final PageManagerFlushThread flushThread;
-  private final int                    freePageRAM;
+  private       long                                 lastCheckForRAM                       = 0;
+  private final PageManagerFlushThread               flushThread;
+  private final int                                  freePageRAM;
+  private final AtomicBoolean                        flushPagesToDisk                      = new AtomicBoolean(true);
 
   public interface ConcurrentPageAccessCallback {
     void access() throws IOException;
@@ -137,6 +129,14 @@ public class PageManager extends LockContext {
     flushOnlyAtClose = flushOnlyAtCloseOld;
   }
 
+  public void suspendPageFlushing(final boolean value) {
+    flushThread.setSuspended(value);
+  }
+
+  public boolean isPageFlushingSuspended() {
+    return flushThread.isSuspended();
+  }
+
   /**
    * Test only API.
    */
@@ -166,7 +166,7 @@ public class PageManager extends LockContext {
     for (Iterator<MutablePage> it = writeCache.values().iterator(); it.hasNext(); ) {
       final MutablePage p = it.next();
       if (p.getPageId().getFileId() == fileId) {
-        totalWriteCacheRAM.addAndGet(-1 * p.getPhysicalSize());
+        totalWriteCacheRAM.addAndGet(-1L * p.getPhysicalSize());
         it.remove();
       }
     }
@@ -174,7 +174,7 @@ public class PageManager extends LockContext {
     for (Iterator<ImmutablePage> it = readCache.values().iterator(); it.hasNext(); ) {
       final ImmutablePage p = it.next();
       if (p.getPageId().getFileId() == fileId) {
-        totalReadCacheRAM.addAndGet(-1 * p.getPhysicalSize());
+        totalReadCacheRAM.addAndGet(-1L * p.getPhysicalSize());
         it.remove();
       }
     }
@@ -207,77 +207,67 @@ public class PageManager extends LockContext {
     return page;
   }
 
-  public BasePage checkPageVersion(final MutablePage page, final boolean isNew) throws IOException {
+  public void checkPageVersion(final MutablePage page, final boolean isNew) throws IOException {
     final PageId pageId = page.getPageId();
 
     if (!fileManager.existsFile(pageId.getFileId()))
       throw new ConcurrentModificationException("Concurrent modification on page " + pageId + " file with id " + pageId.getFileId()
           + " does not exists anymore. Please retry the operation (threadId=" + Thread.currentThread().getId() + ")");
 
-    final BasePage p = getPage(pageId, page.getPhysicalSize(), isNew, false);
+    final BasePage mostRecentPage = getPage(pageId, page.getPhysicalSize(), isNew, false);
 
-    if (p != null && p.getVersion() != page.getVersion()) {
+    if (mostRecentPage != null && mostRecentPage.getVersion() != page.getVersion()) {
       totalConcurrentModificationExceptions.incrementAndGet();
 
       throw new ConcurrentModificationException(
           "Concurrent modification on page " + pageId + " in file '" + fileManager.getFile(pageId.getFileId()).getFileName() + "' (current v."
-              + page.getVersion() + " <> database v." + p.getVersion() + "). Please retry the operation (threadId=" + Thread.currentThread().getId() + ")");
+              + page.getVersion() + " <> database v." + mostRecentPage.getVersion() + "). Please retry the operation (threadId=" + Thread.currentThread()
+              .getId() + ")");
     }
-
-    if (p != null)
-      return p.createImmutableView();
-
-    return null;
   }
 
   public void updatePages(final Map<PageId, MutablePage> newPages, final Map<PageId, MutablePage> modifiedPages, final boolean asyncFlush)
       throws IOException, InterruptedException {
     lock();
     try {
+      final List<MutablePage> pagesToFlush = new ArrayList<>((newPages != null ? newPages.size() : 0) + modifiedPages.size());
+
       if (newPages != null)
         for (MutablePage p : newPages.values())
-          updatePage(p, true, asyncFlush);
+          pagesToFlush.add(updatePage(p, true));
 
       for (MutablePage p : modifiedPages.values())
-        updatePage(p, false, asyncFlush);
+        pagesToFlush.add(updatePage(p, false));
+
+      flushPages(pagesToFlush, asyncFlush);
+
     } finally {
       unlock();
     }
   }
 
-  public void updatePage(final MutablePage page, final boolean isNew, final boolean asyncFlush) throws IOException, InterruptedException {
-    final BasePage p = getPage(page.getPageId(), page.getPhysicalSize(), isNew, true);
-    if (p != null) {
+  public MutablePage updatePage(final MutablePage page, final boolean isNew) throws IOException, InterruptedException {
+    final PageId pageId = page.getPageId();
 
-      if (p.getVersion() != page.getVersion()) {
+    final BasePage mostRecentPage = getPage(pageId, page.getPhysicalSize(), isNew, true);
+    if (mostRecentPage != null) {
+      if (mostRecentPage.getVersion() != page.getVersion()) {
         totalConcurrentModificationExceptions.incrementAndGet();
         throw new ConcurrentModificationException(
-            "Concurrent modification on page " + page.getPageId() + " in file '" + fileManager.getFile(page.pageId.getFileId()).getFileName() + "' (current v."
-                + page.getVersion() + " <> database v." + p.getVersion() + "). Please retry the operation (threadId=" + Thread.currentThread().getId() + ")");
+            "Concurrent modification on page " + pageId + " in file '" + fileManager.getFile(pageId.getFileId()).getFileName() + "' (current v."
+                + page.getVersion() + " <> database v." + mostRecentPage.getVersion() + "). Please retry the operation (threadId=" + Thread.currentThread()
+                .getId() + ")");
       }
 
       page.incrementVersion();
-      page.flushMetadata();
-
-      // ADD THE PAGE IN TO WRITE CACHE. FROM THIS POINT THE PAGE IS NEVER MODIFIED DIRECTLY, SO IT CAN BE SHARED
-      if (writeCache.put(page.pageId, page) == null)
-        totalWriteCacheRAM.addAndGet(page.getPhysicalSize());
-
-      if (asyncFlush) {
-        // ASYNCHRONOUS FLUSH
-        if (!flushOnlyAtClose)
-          // ONLY IF NOT ALREADY IN THE QUEUE, ENQUEUE THE PAGE TO BE FLUSHED BY A SEPARATE THREAD
-          flushThread.asyncFlush(page);
-      } else {
-        // SYNCHRONOUS FLUSH
-        flushPage(page);
-      }
+      page.updateMetadata();
 
       LogManager.instance().log(this, Level.FINE, "Updated page %s (size=%d threadId=%d)", null, page, page.getPhysicalSize(), Thread.currentThread().getId());
     }
+    return page;
   }
 
-  public void overridePage(final MutablePage page) throws IOException {
+  public void overwritePage(final MutablePage page) throws IOException {
     readCache.remove(page.pageId);
 
     // ADD THE PAGE IN TO WRITE CACHE. FROM THIS POINT THE PAGE IS NEVER MODIFIED DIRECTLY, SO IT CAN BE SHARED
@@ -310,47 +300,48 @@ public class PageManager extends LockContext {
     return stats;
   }
 
-  private void putPageInCache(final ImmutablePage page) {
-    if (readCache.put(page.pageId, page) == null)
-      totalReadCacheRAM.addAndGet(page.getPhysicalSize());
-
-    checkForPageDisposal();
-  }
-
   public void removePageFromCache(final PageId pageId) {
     final ImmutablePage page = readCache.remove(pageId);
     if (page != null)
-      totalReadCacheRAM.addAndGet(-1 * page.getPhysicalSize());
+      totalReadCacheRAM.addAndGet(-1L * page.getPhysicalSize());
 
     final MutablePage page2 = writeCache.remove(pageId);
     if (page2 != null)
-      totalWriteCacheRAM.addAndGet(-1 * page2.getPhysicalSize());
+      totalWriteCacheRAM.addAndGet(-1L * page2.getPhysicalSize());
   }
 
-  public void flushPagesOfFile(final int fileId) {
-    for (MutablePage p : writeCache.values()) {
-      if (p.getPageId().getFileId() == fileId)
-        try {
-          flushPage(p);
-        } catch (Exception e) {
-          LogManager.instance().log(this, Level.SEVERE, "Error on flushing page %s (threadId=%d)", e, p, Thread.currentThread().getId());
-        }
+//  public void preloadFile(final int fileId) {
+//    LogManager.instance().log(this, Level.FINE, "Pre-loading file %d (threadId=%d)...", null, fileId, Thread.currentThread().getId());
+//
+//    try {
+//      final PaginatedFile file = fileManager.getFile(fileId);
+//      final int pageSize = file.getPageSize();
+//      final int pages = (int) (file.getSize() / pageSize);
+//
+//      for (int pageNumber = 0; pageNumber < pages; ++pageNumber)
+//        loadPage(new PageId(fileId, pageNumber), pageSize, false);
+//
+//    } catch (IOException e) {
+//      throw new DatabaseMetadataException("Cannot load file in RAM", e);
+//    }
+//  }
+
+  public void flushPages(final List<MutablePage> updatedPages, final boolean asyncFlush) throws IOException, InterruptedException {
+    for (MutablePage page : updatedPages) {
+      // ADD THE PAGE IN TO WRITE CACHE. FROM THIS POINT THE PAGE IS NEVER MODIFIED DIRECTLY, SO IT CAN BE SHARED
+      if (writeCache.put(page.pageId, page) == null)
+        totalWriteCacheRAM.addAndGet(page.getPhysicalSize());
     }
-  }
 
-  public void preloadFile(final int fileId) {
-    LogManager.instance().log(this, Level.FINE, "Pre-loading file %d (threadId=%d)...", null, fileId, Thread.currentThread().getId());
-
-    try {
-      final PaginatedFile file = fileManager.getFile(fileId);
-      final int pageSize = file.getPageSize();
-      final int pages = (int) (file.getSize() / pageSize);
-
-      for (int pageNumber = 0; pageNumber < pages; ++pageNumber)
-        loadPage(new PageId(fileId, pageNumber), pageSize, false);
-
-    } catch (IOException e) {
-      throw new DatabaseMetadataException("Cannot load file in RAM", e);
+    if (asyncFlush) {
+      // ASYNCHRONOUS FLUSH
+      if (!flushOnlyAtClose)
+        // ONLY IF NOT ALREADY IN THE QUEUE, ENQUEUE THE PAGE TO BE FLUSHED BY A SEPARATE THREAD
+        flushThread.scheduleFlushOfPages(updatedPages);
+    } else {
+      // SYNCHRONOUS FLUSH
+      for (MutablePage page : updatedPages)
+        flushPage(page);
     }
   }
 
@@ -359,9 +350,9 @@ public class PageManager extends LockContext {
       if (fileManager.existsFile(page.pageId.getFileId())) {
         final PaginatedFile file = fileManager.getFile(page.pageId.getFileId());
         if (!file.isOpen())
-          throw new DatabaseMetadataException("Cannot flush pages on disk because file is closed");
+          throw new DatabaseMetadataException("Cannot flush pages on disk because file '" + file.getFileName() + "' is closed");
 
-        LogManager.instance().log(this, Level.FINE, "Flushing page %s (threadId=%d)...", null, page, Thread.currentThread().getId());
+        LogManager.instance().log(this, Level.FINE, "Flushing page %s to disk (threadId=%d)...", null, page, Thread.currentThread().getId());
 
         if (!flushOnlyAtClose) {
           putPageInCache(page.createImmutableView());
@@ -381,7 +372,7 @@ public class PageManager extends LockContext {
     } finally {
       // DELETE ONLY CURRENT VERSION OF THE PAGE (THIS PREVENT TO REMOVE NEWER PAGES)
       if (writeCache.remove(page.pageId, page))
-        totalWriteCacheRAM.addAndGet(-1 * page.getPhysicalSize());
+        totalWriteCacheRAM.addAndGet(-1L * page.getPhysicalSize());
 
       txManager.notifyPageFlushed(page);
     }
@@ -488,7 +479,7 @@ public class PageManager extends LockContext {
         final ImmutablePage removedPage = readCache.remove(page.pageId);
         if (removedPage != null) {
           freedRAM += page.getPhysicalSize();
-          totalReadCacheRAM.addAndGet(-1 * page.getPhysicalSize());
+          totalReadCacheRAM.addAndGet(-1L * page.getPhysicalSize());
           pagesEvicted.incrementAndGet();
 
           if (freedRAM > ramToFree)
@@ -507,5 +498,12 @@ public class PageManager extends LockContext {
           FileUtils.getSizeAsString(maxRAM), Thread.currentThread().getId());
 
     lastCheckForRAM = System.currentTimeMillis();
+  }
+
+  private void putPageInCache(final ImmutablePage page) {
+    if (readCache.put(page.pageId, page) == null)
+      totalReadCacheRAM.addAndGet(page.getPhysicalSize());
+
+    checkForPageDisposal();
   }
 }

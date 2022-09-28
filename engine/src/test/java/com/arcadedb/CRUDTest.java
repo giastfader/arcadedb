@@ -1,37 +1,36 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb;
 
 import com.arcadedb.database.Database;
-import com.arcadedb.database.Document;
-import com.arcadedb.database.DocumentCallback;
 import com.arcadedb.database.MutableDocument;
+import com.arcadedb.database.RID;
 import com.arcadedb.engine.Bucket;
 import com.arcadedb.engine.DatabaseChecker;
 import com.arcadedb.log.LogManager;
+import com.arcadedb.schema.Schema;
+import com.arcadedb.schema.Type;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.logging.Level;
+import java.util.concurrent.atomic.*;
+import java.util.logging.*;
 
 public class CRUDTest extends TestHelper {
   private static final int TOT = Bucket.DEF_PAGE_SIZE * 2;
@@ -47,15 +46,12 @@ public class CRUDTest extends TestHelper {
     db.begin();
     try {
 
-      db.scanType("V", true, new DocumentCallback() {
-        @Override
-        public boolean onRecord(Document record) {
-          final MutableDocument document = record.modify();
-          document.set("update", true);
-          document.set("largeField", "This is a large field to force the page overlap at some point"); // FORCE THE PAGE OVERLAP
-          document.save();
-          return true;
-        }
+      db.scanType("V", true, record -> {
+        final MutableDocument document = record.modify();
+        document.set("update", true);
+        document.set("largeField", "This is a large field to force the page overlap at some point"); // FORCE THE PAGE OVERLAP
+        document.save();
+        return true;
       });
 
       db.commit();
@@ -64,17 +60,14 @@ public class CRUDTest extends TestHelper {
 
       Assertions.assertEquals(TOT, db.countType("V", true));
 
-      db.scanType("V", true, new DocumentCallback() {
-        @Override
-        public boolean onRecord(Document record) {
-          Assertions.assertEquals(true, record.get("update"));
-          Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField"));
-          return true;
-        }
+      db.scanType("V", true, record -> {
+        Assertions.assertEquals(true, record.get("update"));
+        Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField"));
+        return true;
       });
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -95,23 +88,56 @@ public class CRUDTest extends TestHelper {
 
         Assertions.assertEquals(TOT, db.countType("V", true));
 
-        LogManager.instance().log(this, Level.FINE, "Completed %d cycle of updates", null, i);
+        LogManager.instance().log(this, Level.FINE, "Completed %d cycle of updates", i);
       }
 
-      db.scanType("V", true, new DocumentCallback() {
-        @Override
-        public boolean onRecord(Document record) {
-          Assertions.assertEquals(true, record.get("update"));
+      db.scanType("V", true, record -> {
+        Assertions.assertEquals(true, record.get("update"));
 
-          for (int i = 0; i < 10; ++i)
-            Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField" + i));
+        for (int i = 0; i < 10; ++i)
+          Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField" + i));
 
-          return true;
-        }
+        return true;
       });
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
+    }
+  }
+
+  @Test
+  public void testUpdateAndDelete() {
+    final Database db = database;
+
+    try {
+      db.getSchema().getType("V").createProperty("id", Type.STRING);
+      db.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, "V", "id");
+
+      // ALL IN THE SAME TX
+      db.transaction(() -> {
+        final MutableDocument doc = database.newDocument("V").set("id", "0").save();
+        doc.set("id", "is an update").save();
+        doc.delete();
+      });
+
+      // SEPARATE TXs
+      final AtomicReference<RID> rid = new AtomicReference<>();
+      db.transaction(() -> {
+        final MutableDocument doc = database.newDocument("V").set("id", "is a test").save();
+        doc.set("id", "is an update again").save();
+        rid.set(doc.getIdentity());
+      });
+
+      db.transaction(() -> {
+        MutableDocument doc = rid.get().getRecord(true).asDocument().modify().set("id", "this is an update");
+        doc.save();
+
+        database.deleteRecord(doc);
+      });
+
+    } finally {
+      db.getSchema().dropIndex("V[id]");
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
@@ -136,15 +162,13 @@ public class CRUDTest extends TestHelper {
 
         Assertions.assertEquals(TOT, db.countType("V", true));
 
-        db.scanType("V", true, new DocumentCallback() {
-          @Override
-          public boolean onRecord(Document record) {
-            Assertions.assertEquals(true, record.get("update"));
+        db.scanType("V", true, record -> {
+          Assertions.assertEquals(true, record.get("update"));
 
-            Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField" + counter));
+          Assertions.assertEquals("This is a large field to force the page overlap at some point", record.get("largeField" + counter),
+              "Unexpected content in record " + record.getIdentity());
 
-            return true;
-          }
+          return true;
         });
 
         deleteAll();
@@ -153,61 +177,48 @@ public class CRUDTest extends TestHelper {
 
         db.commit();
 
-        database.transaction((tx) -> {
-          Assertions.assertEquals(0, db.countType("V", true));
-        });
+        database.transaction(() -> Assertions.assertEquals(0, db.countType("V", true)));
 
-        LogManager.instance().log(this, Level.FINE, "Completed %d cycle of updates+delete", null, i);
+        LogManager.instance().log(this, Level.FINE, "Completed %d cycle of updates+delete", i);
 
         createAll();
 
-        database.transaction((tx) -> {
-          Assertions.assertEquals(TOT, db.countType("V", true));
-        });
+        database.transaction(() -> Assertions.assertEquals(TOT, db.countType("V", true)));
       }
 
     } finally {
-      new DatabaseChecker().check(database, 0);
+      new DatabaseChecker(database).setVerboseLevel(0).check();
     }
   }
 
   private void createAll() {
-    database.transaction(new Database.TransactionScope() {
-      @Override
-      public void execute(Database database) {
-        if (!database.getSchema().existsType("V"))
-          database.getSchema().createDocumentType("V");
+    database.transaction(() -> {
+      if (!database.getSchema().existsType("V"))
+        database.getSchema().createDocumentType("V");
 
-        for (int i = 0; i < TOT; ++i) {
-          final MutableDocument v = database.newDocument("V");
-          v.set("id", i);
-          v.set("name", "V" + i);
-          v.save();
-        }
+      for (int i = 0; i < TOT; ++i) {
+        final MutableDocument v = database.newDocument("V");
+        v.set("id", i);
+        v.set("name", "V" + i);
+        v.save();
       }
     });
   }
 
   private void updateAll(String largeField) {
-    database.scanType("V", true, new DocumentCallback() {
-      @Override
-      public boolean onRecord(Document record) {
-        final MutableDocument document = (MutableDocument) record.modify();
-        document.set("update", true);
-        document.set(largeField, "This is a large field to force the page overlap at some point"); // FORCE THE PAGE OVERLAP
-        document.save();
-        return true;
-      }
+    database.scanType("V", true, record -> {
+      final MutableDocument document = record.modify();
+      document.set("update", true);
+      document.set(largeField, "This is a large field to force the page overlap at some point"); // FORCE THE PAGE OVERLAP
+      document.save();
+      return true;
     });
   }
 
   private void deleteAll() {
-    database.scanType("V", true, new DocumentCallback() {
-      @Override
-      public boolean onRecord(Document record) {
-        database.deleteRecord(record);
-        return true;
-      }
+    database.scanType("V", true, record -> {
+      database.deleteRecord(record);
+      return true;
     });
   }
 

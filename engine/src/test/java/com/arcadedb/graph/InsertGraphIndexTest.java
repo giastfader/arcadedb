@@ -1,38 +1,36 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.graph;
 
+import com.arcadedb.NullLogger;
 import com.arcadedb.TestHelper;
 import com.arcadedb.database.async.ErrorCallback;
+import com.arcadedb.database.bucketselectionstrategy.PartitionedBucketSelectionStrategy;
 import com.arcadedb.engine.WALFile;
 import com.arcadedb.index.IndexCursor;
 import com.arcadedb.log.LogManager;
-import com.arcadedb.log.Logger;
 import com.arcadedb.schema.Schema;
 import com.arcadedb.schema.VertexType;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import java.util.logging.Level;
+import java.util.logging.*;
 
 public class InsertGraphIndexTest extends TestHelper {
   private static final int    VERTICES         = 1_000;
@@ -43,42 +41,26 @@ public class InsertGraphIndexTest extends TestHelper {
 
   @Test
   public void testGraph() {
-    final InsertGraphIndexTest test = new InsertGraphIndexTest();
-
     // PHASE 1
     {
-      test.createSchema();
-      test.createVertices();
-      test.loadVertices();
-      test.createEdges();
+      createSchema();
+      createVertices();
+      loadVertices();
+      createEdges();
     }
 
     // PHASE 2
     {
-      Vertex[] cachedVertices = test.loadVertices();
-      test.checkGraph(cachedVertices);
+      Vertex[] cachedVertices = loadVertices();
+      checkGraph(cachedVertices);
     }
 
-    test.database.close();
+    database.close();
   }
 
   @Override
   protected String getPerformanceProfile() {
-    LogManager.instance().setLogger(new Logger() {
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object arg1, Object arg2, Object arg3,
-          Object arg4, Object arg5, Object arg6, Object arg7, Object arg8, Object arg9, Object arg10, Object arg11, Object arg12, Object arg13, Object arg14,
-          Object arg15, Object arg16, Object arg17) {
-      }
-
-      @Override
-      public void log(Object iRequester, Level iLevel, String iMessage, Throwable iException, String context, Object... args) {
-      }
-
-      @Override
-      public void flush() {
-      }
-    });
+    LogManager.instance().setLogger(NullLogger.INSTANCE);
 
     return "high-performance";
   }
@@ -124,7 +106,7 @@ public class InsertGraphIndexTest extends TestHelper {
     final Vertex[] cachedVertices = new Vertex[VERTICES];
 
     //System.out.println("Loading " + VERTICES + " in RAM...");
-    database.transaction((tx) -> {
+    database.transaction(() -> {
       final long begin = System.currentTimeMillis();
       try {
         int counter = 0;
@@ -190,16 +172,12 @@ public class InsertGraphIndexTest extends TestHelper {
   }
 
   private void createSchema() {
-    database.begin();
-
-    final VertexType type = database.getSchema().createVertexType(VERTEX_TYPE_NAME, PARALLEL);
-    type.createProperty("id", Long.class);
+    final VertexType vertex = database.getSchema().createVertexType(VERTEX_TYPE_NAME, PARALLEL);
+    vertex.createProperty("id", Integer.class);
+    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, true, VERTEX_TYPE_NAME, "id");
+    vertex.setBucketSelectionStrategy(new PartitionedBucketSelectionStrategy(new String[] { "id" }));
 
     database.getSchema().createEdgeType(EDGE_TYPE_NAME, PARALLEL);
-
-    database.getSchema().createTypeIndex(Schema.INDEX_TYPE.LSM_TREE, false, VERTEX_TYPE_NAME, new String[] { "id" }, 5000000);
-
-    database.commit();
   }
 
   private void checkGraph(Vertex[] cachedVertices) {

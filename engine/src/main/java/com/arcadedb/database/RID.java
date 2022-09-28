@@ -1,31 +1,30 @@
 /*
- * Copyright 2021 Arcade Data Ltd
+ * Copyright © 2021-present Arcade Data Ltd (info@arcadedata.com)
  *
- * Licensed to the Apache Software Foundation (ASF) under one
- * or more contributor license agreements.  See the NOTICE file
- * distributed with this work for additional information
- * regarding copyright ownership.  The ASF licenses this file
- * to you under the Apache License, Version 2.0 (the
- * "License"); you may not use this file except in compliance
- * with the License.  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: 2021-present Arcade Data Ltd (info@arcadedata.com)
+ * SPDX-License-Identifier: Apache-2.0
  */
-
 package com.arcadedb.database;
 
 import com.arcadedb.exception.RecordNotFoundException;
 import com.arcadedb.graph.Edge;
 import com.arcadedb.graph.Vertex;
+import com.arcadedb.utility.NumberUtils;
 
-import java.io.Serializable;
+import java.io.*;
+import java.util.*;
 
 /**
  * It represents the logical address of a record in the database. The record id is composed by the bucket id (the bucket containing the record) and the offset
@@ -34,18 +33,28 @@ import java.io.Serializable;
  * Immutable class.
  */
 public class RID implements Identifiable, Comparable<Identifiable>, Serializable {
-  private final Database database;
-  private final int      bucketId;
-  private final long     offset;
+  private transient final Database database;
+  protected final         int      bucketId;
+  protected final         long     offset;
 
   public RID(final Database database, final int bucketId, final long offset) {
-    this.database = database;
+    if (database == null)
+      // RETRIEVE THE DATABASE FROM THE THREAD LOCAL
+      this.database = DatabaseContext.INSTANCE.getActiveDatabase();
+    else
+      this.database = database;
+
     this.bucketId = bucketId;
     this.offset = offset;
   }
 
   public RID(final Database database, String value) {
-    this.database = database;
+    if (database == null)
+      // RETRIEVE THE DATABASE FROM THE THREAD LOCAL
+      this.database = DatabaseContext.INSTANCE.getActiveDatabase();
+    else
+      this.database = database;
+
     if (!value.startsWith("#"))
       throw new IllegalArgumentException("The RID '" + value + "' is not valid");
 
@@ -54,6 +63,23 @@ public class RID implements Identifiable, Comparable<Identifiable>, Serializable
     final String[] parts = value.split(":", 2);
     this.bucketId = Integer.parseInt(parts[0]);
     this.offset = Long.parseLong(parts[1]);
+  }
+
+  public static boolean is(final Object value) {
+    if (value instanceof RID)
+      return true;
+
+    if (value instanceof String) {
+      final String valueAsString = value.toString();
+      if (valueAsString.length() > 3 && valueAsString.charAt(0) == '#') {
+        final String[] parts = valueAsString.substring(1).split(":");
+        if (parts.length == 2 && NumberUtils.isIntegerNumber(parts[0]) && NumberUtils.isIntegerNumber(parts[1])) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   public int getBucketId() {
@@ -126,19 +152,27 @@ public class RID implements Identifiable, Comparable<Identifiable>, Serializable
       return false;
 
     final RID o = ((Identifiable) obj).getIdentity();
-
-    return bucketId == o.bucketId && offset == o.offset;
+    return Objects.equals(database, o.getDatabase()) && bucketId == o.bucketId && offset == o.offset;
   }
 
   @Override
   public int hashCode() {
-    int result = bucketId;
-    result = 31 * result + (int) (offset ^ (offset >>> 32));
-    return result;
+    return Objects.hash(database, bucketId, offset);
   }
 
   @Override
   public int compareTo(final Identifiable o) {
+    final Database otherDb = o.getIdentity().getDatabase();
+    if (database != null) {
+      if (otherDb != null) {
+        final int res = database.getName().compareTo(otherDb.getName());
+        if (res != 0)
+          return res;
+      } else
+        return -1;
+    } else if (otherDb != null)
+      return 1;
+
     final RID other = o.getIdentity();
     if (bucketId > other.bucketId)
       return 1;
@@ -155,5 +189,9 @@ public class RID implements Identifiable, Comparable<Identifiable>, Serializable
 
   public Database getDatabase() {
     return database;
+  }
+
+  public boolean isValid() {
+    return bucketId > -1 && offset > -1;
   }
 }
